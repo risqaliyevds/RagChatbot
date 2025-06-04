@@ -1,0 +1,120 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: chatbot_postgres
+    environment:
+      POSTGRES_DB: chatbot_db
+      POSTGRES_USER: chatbot_user
+      POSTGRES_PASSWORD: chatbot_password
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatbot_user -d chatbot_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Qdrant Vector Database
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/collections"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Main FastAPI Application
+  chatbot_app:
+    build: .
+    image: chatbot:latest
+    container_name: chatbot_app
+    network_mode: host
+    environment:
+      # Database Configuration
+      - DATABASE_URL=postgresql://chatbot_user:chatbot_password@localhost:5433/chatbot_db
+      
+      # Qdrant Configuration
+      - QDRANT_URL=http://localhost:6333
+      - QDRANT_PATH=./qdrant_storage
+      - QDRANT_COLLECTION_NAME=rag_documents
+      - QDRANT_VECTOR_SIZE=0
+      - QDRANT_DISTANCE=COSINE
+      - QDRANT_FORCE_RECREATE=true
+      - QDRANT_ON_DISK=false
+      
+      # Model Configuration
+      - EMBEDDING_MODEL=intfloat/multilingual-e5-large-instruct
+      - CHAT_MODEL=google/gemma-3-12b-it
+      
+      # vLLM Configuration (external services)
+      - VLLM_API_KEY=EMPTY
+      - VLLM_CHAT_ENDPOINT=http://localhost:11444/v1
+      - EMBEDDING_PORT=11445
+      - CHAT_MODEL_PORT=11444
+      
+      # Document Configuration
+      - DOCUMENT_URL=https://docs.vllm.ai/en/latest/getting_started/quickstart.html
+      - DOCUMENTS_PATH=/app/documents
+      
+      # RAG Parameters - Improved for better accuracy
+      - TOP_K=5
+      - CHUNK_SIZE=800
+      - CHUNK_OVERLAP=150
+      
+      # FastAPI Configuration
+      - HOST=0.0.0.0
+      - PORT=8081
+    volumes:
+      - ./documents:/app/documents:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+  # Gradio Interface (Optional)
+  gradio_app:
+    build: .
+    image: chatbot:latest
+    container_name: gradio_app
+    command: ["python", "app/gradio_app.py"]
+    network_mode: host
+    environment:
+      - API_BASE_URL=http://localhost:8081
+    depends_on:
+      chatbot_app:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  qdrant_data:
+
+networks:
+  default:
+    name: chatbot-network 

@@ -1,0 +1,153 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+
+# Logs
+*.log
+logs/
+app.log
+app_new.log
+gradio.log
+
+# Database
+*.db
+*.sqlite3
+*.sql.backup
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Data directories (runtime data)
+data/
+data/postgres_data/
+data/qdrant_storage/
+data/app_data/
+qdrant_storage/
+
+# Temporary files
+*.tmp
+*.temp
+*.cache
+chat_history.json
+*.pid
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+.directory
+
+# Environment variables and secrets
+.env.local
+.env.production
+.env.development
+.env.test
+*.key
+*.pem
+*.p12
+*.pfx
+secrets/
+credentials/
+
+# Model files and embeddings (large files)
+models/
+*.bin
+*.safetensors
+*.onnx
+*.pt
+*.pth
+*.h5
+*.pkl
+*.pickle
+embeddings/
+vector_store/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+*.ipynb
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# pytest
+.pytest_cache/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Backup files
+*.bak
+*.backup
+*.old
+*~
+
+# Compiled files
+*.pyc
+*.pyo
+*.pyd
+
+# Package files
+*.tar.gz
+*.zip
+*.rar
+
+# Node.js (if any frontend components)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# System files
+*.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+
+# Git
+.git/
+*.orig
+
+# Monitoring and profiling
+*.prof
+*.trace 
