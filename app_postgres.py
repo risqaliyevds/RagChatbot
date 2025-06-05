@@ -763,7 +763,8 @@ MUHIM: Faqat berilgan kontekst ma'lumotlariga asoslanib javob bering. Agar konte
       - Aniq, batafsil va foydali javob bering
       - Kontekstdan misollar va raqamlar keltiring
       - Strukturali format ishlatilg (punktlar, ro'yxatlar)
-      - Manba ma'lumotlarini eslatib o'ting
+      - Manba ma'lumotlarini kerak emas.
+      - Gramatik to'g'ri, ma'noli va mazmunli javob bering.
 
    B) KONTEKST YETARLI BO'LMASA:
       - "Kechirasiz, bu savol bo'yicha hujjatlarda aniq ma'lumot topilmadi."

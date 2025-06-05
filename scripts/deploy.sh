@@ -192,7 +192,7 @@ wait_for_services() {
     print_status "Waiting for main application..."
     timeout=120
     while [ $timeout -gt 0 ]; do
-        if curl -s http://localhost:8080/health &> /dev/null; then
+        if curl -s http://localhost:8081/health &> /dev/null; then
             print_success "Main application is ready"
             break
         fi
@@ -240,10 +240,10 @@ show_access_info() {
     echo "📋 Service Access Information:"
     echo "=============================="
     echo ""
-    echo "🌐 Main API:           http://localhost:8080"
-    echo "📖 API Documentation: http://localhost:8080/docs"
-    echo "❤️  Health Check:      http://localhost:8080/health"
-    echo "📊 Collections Info:   http://localhost:8080/v1/collections"
+    echo "🌐 Main API:           http://localhost:8081"
+    echo "📖 API Documentation: http://localhost:8081/docs"
+    echo "❤️  Health Check:      http://localhost:8081/health"
+    echo "📊 Collections Info:   http://localhost:8081/v1/collections"
     echo ""
     echo "🎨 Gradio Interface:   http://localhost:7860"
     echo ""
@@ -266,7 +266,7 @@ show_access_info() {
     echo "🔧 Troubleshooting:"
     echo "==================="
     echo "If services fail to start, check logs and ensure ports are not in use:"
-    echo "  - Port 8080 (Main API)"
+    echo "  - Port 8081 (Main API)"
     echo "  - Port 7860 (Gradio)"
     echo "  - Port 5432 (PostgreSQL)"
     echo "  - Port 6333 (Qdrant)"
