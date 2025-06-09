@@ -42,6 +42,8 @@ gradio.log
 # Docker
 .dockerignore
 docker-compose.override.yml
+docker_images_tar/
+*.tar.gz
 
 # Data directories (runtime data)
 data/
@@ -123,7 +125,6 @@ dmypy.json
 *.pyd
 
 # Package files
-*.tar.gz
 *.zip
 *.rar
 
@@ -150,4 +151,8 @@ Desktop.ini
 
 # Monitoring and profiling
 *.prof
-*.trace 
+*.trace
+
+# Test files (keep in tests/ directory)
+test_*.md
+test_*.sh 

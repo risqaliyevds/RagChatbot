@@ -18,7 +18,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -33,7 +33,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 # Qdrant imports
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
+from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
 
 # Transformers imports for embedding
 import torch
@@ -69,6 +69,10 @@ db_manager = None
 # Chat history storage - now using PostgreSQL
 CHAT_HISTORY_FILE = "chat_history.json"  # For migration purposes
 CHAT_TIMEOUT_HOURS = 1
+
+# Add a new import for progress tracking
+import asyncio
+from typing import AsyncGenerator
 
 
 class MultilingualE5Embeddings:
@@ -225,6 +229,55 @@ class HealthResponse(BaseModel):
     message: str = Field(..., description="Соғлиқ хабари")
     qdrant_status: str = Field(..., description="Qdrant уланиш ҳолати")
     database_status: str = Field(..., description="Database уланиш ҳолати")
+
+
+class DocumentUploadResponse(BaseModel):
+    """Ҳужжат юклаш жавоби модели"""
+    success: bool = Field(..., description="Юклаш муваффақиятли бўлдими")
+    message: str = Field(..., description="Жавоб хабари")
+    filename: str = Field(..., description="Юкланган файл номи")
+    file_size: int = Field(..., description="Файл ҳажми (байтларда)")
+    chunks_added: int = Field(..., description="Қўшилган чанклар сони")
+    processing_time: float = Field(..., description="Ишлов бериш вақти (сонияларда)")
+
+
+class FileInfo(BaseModel):
+    """Файл маълумотлари модели"""
+    filename: str = Field(..., description="Файл номи")
+    file_size: int = Field(..., description="Файл ҳажми (байтларда)")
+    created_at: str = Field(..., description="Яратилган сана")
+    modified_at: str = Field(..., description="Ўзгартирилган сана")
+    file_extension: str = Field(..., description="Файл кенгайтмаси")
+
+
+class DocumentListResponse(BaseModel):
+    """Ҳужжатлар рўйхати жавоби модели"""
+    success: bool = Field(..., description="Амал муваффақиятли бўлдими")
+    message: str = Field(..., description="Жавоб хабари")
+    files: List[FileInfo] = Field(default_factory=list, description="Файллар рўйхати")
+    total_files: int = Field(..., description="Жами файллар сони")
+    total_size: int = Field(..., description="Жами файллар ҳажми")
+
+
+class DocumentDeleteRequest(BaseModel):
+    """Ҳужжат ўчириш сўрови модели"""
+    filename: str = Field(..., description="Ўчирилиши керак бўлган файл номи")
+
+
+class DocumentDeleteResponse(BaseModel):
+    """Ҳужжат ўчириш жавоби модели"""
+    success: bool = Field(..., description="Ўчириш муваффақиятли бўлдими")
+    message: str = Field(..., description="Жавоб хабари")
+    filename: str = Field(..., description="Ўчирилган файл номи")
+    embeddings_deleted: int = Field(default=0, description="Ўчирилган векторлар сони")
+
+
+class DocumentUploadProgress(BaseModel):
+    """Ҳужжат юклаш прогресс модели"""
+    stage: str = Field(..., description="Ҳозирги босқич")
+    progress: float = Field(..., description="Прогресс фоизи (0-100)")
+    message: str = Field(..., description="Ҳозирги ҳолат хабари")
+    details: Optional[Dict[str, Any]] = Field(default=None, description="Қўшимча маълумотлар")
 
 
 def load_config() -> Dict[str, Any]:
@@ -571,26 +624,78 @@ class SimpleQdrantVectorStore:
                 
                 metadata["adjusted_score"] = result.score + relevance_boost
                 
-                doc = Document(
+                document = Document(
                     page_content=content,
                     metadata=metadata
                 )
-                documents.append(doc)
+                documents.append(document)
+                
+                if len(documents) >= k:
+                    break
             
-            # Sort by adjusted score and return top k
-            documents.sort(key=lambda x: x.metadata.get("adjusted_score", 0), reverse=True)
-            final_docs = documents[:k]
+            # Sort by adjusted score (highest first)
+            documents.sort(key=lambda x: x.metadata.get("adjusted_score", x.metadata.get("score", 0)), reverse=True)
             
-            logger.debug(f"Found {len(final_docs)} high-quality documents above threshold {score_threshold}")
-            if final_docs:
-                scores = [doc.metadata.get("adjusted_score", 0) for doc in final_docs]
-                logger.info(f"Final document scores: {scores}")
-            
-            return final_docs
+            logger.info(f"Retrieved {len(documents)} relevant documents for query: {query[:50]}...")
+            return documents
             
         except Exception as e:
             logger.error(f"Error searching vector store: {e}")
             return []
+
+    def delete_documents_by_source(self, source_identifier: str) -> int:
+        """Delete documents from the vector store based on source identifier"""
+        try:
+            logger.info(f"Deleting documents with source identifier: {source_identifier}")
+            
+            # First, find all points that match the source identifier
+            # We'll check both 'source' and 'uploaded_filename' fields
+            filter_conditions = Filter(
+                should=[
+                    FieldCondition(
+                        key="source",
+                        match=MatchValue(value=source_identifier)
+                    ),
+                    FieldCondition(
+                        key="uploaded_filename", 
+                        match=MatchValue(value=source_identifier)
+                    ),
+                    FieldCondition(
+                        key="source",
+                        match=MatchValue(value=f"uploaded_{source_identifier}")
+                    )
+                ]
+            )
+            
+            # Get points that match the filter
+            search_result = self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=filter_conditions,
+                limit=10000,  # Large limit to get all matching points
+                with_payload=True
+            )
+            
+            points_to_delete = []
+            for point in search_result[0]:  # scroll returns tuple (points, next_page_offset)
+                points_to_delete.append(point.id)
+            
+            if not points_to_delete:
+                logger.info(f"No documents found for source: {source_identifier}")
+                return 0
+            
+            # Delete the points
+            self.client.delete(
+                collection_name=self.collection_name,
+                points_selector=points_to_delete
+            )
+            
+            deleted_count = len(points_to_delete)
+            logger.info(f"Successfully deleted {deleted_count} embeddings for source: {source_identifier}")
+            return deleted_count
+            
+        except Exception as e:
+            logger.error(f"Error deleting documents from vector store: {e}")
+            raise
 
 
 def preprocess_documents(documents: List[Document]) -> List[Document]:
@@ -647,6 +752,223 @@ def preprocess_documents(documents: List[Document]) -> List[Document]:
     
     logger.info(f"Preprocessed {len(processed_docs)} documents from {len(documents)} original documents")
     return processed_docs
+
+
+async def process_uploaded_document(file: UploadFile, config: Dict[str, Any]) -> Tuple[List[Document], str]:
+    """Юкланган ҳужжатни ишлаш"""
+    import tempfile
+    import shutil
+    
+    # Create temporary file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file.filename}") as temp_file:
+        # Copy uploaded file content to temporary file
+        shutil.copyfileobj(file.file, temp_file)
+        temp_file_path = temp_file.name
+    
+    try:
+        documents = []
+        file_extension = file.filename.lower().split('.')[-1] if '.' in file.filename else ''
+        
+        # Process based on file type
+        if file_extension == 'pdf':
+            loader = PyPDFLoader(temp_file_path)
+            documents = loader.load()
+            logger.info(f"Loaded PDF document: {file.filename}")
+            
+        elif file_extension in ['docx', 'doc']:
+            loader = UnstructuredWordDocumentLoader(temp_file_path)
+            documents = loader.load()
+            logger.info(f"Loaded Word document: {file.filename}")
+            
+        elif file_extension in ['txt', 'md']:
+            loader = TextLoader(temp_file_path)
+            documents = loader.load()
+            logger.info(f"Loaded text document: {file.filename}")
+            
+        else:
+            # Try to load as text file
+            try:
+                loader = TextLoader(temp_file_path)
+                documents = loader.load()
+                logger.info(f"Loaded as text document: {file.filename}")
+            except Exception as e:
+                raise ValueError(f"Unsupported file type: {file_extension}. Supported types: PDF, DOCX, TXT, MD")
+        
+        if not documents:
+            raise ValueError("No content could be extracted from the document")
+        
+        # Update metadata with upload information
+        for doc in documents:
+            doc.metadata.update({
+                'uploaded_filename': file.filename,
+                'upload_timestamp': datetime.now().isoformat(),
+                'file_type': file_extension,
+                'source': f"uploaded_{file.filename}"
+            })
+        
+        # Preprocess documents
+        processed_docs = preprocess_documents(documents)
+        
+        if not processed_docs:
+            raise ValueError("Document processing resulted in no valid content")
+        
+        # Split documents into chunks
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=config["chunk_size"],
+            chunk_overlap=config["chunk_overlap"],
+            length_function=len,
+        )
+        
+        split_docs = text_splitter.split_documents(processed_docs)
+        logger.info(f"Split uploaded document into {len(split_docs)} chunks")
+        
+        return split_docs, f"Successfully processed {file.filename}: {len(split_docs)} chunks created"
+        
+    finally:
+        # Clean up temporary file
+        try:
+            os.unlink(temp_file_path)
+        except Exception as e:
+            logger.warning(f"Failed to delete temporary file {temp_file_path}: {e}")
+
+
+async def process_uploaded_document_with_progress(file: UploadFile, config: Dict[str, Any], progress_callback=None) -> Tuple[List[Document], str]:
+    """Process uploaded document with progress tracking"""
+    
+    if progress_callback:
+        await progress_callback("validation", 5, "Файлни текшириш...")
+    
+    file_extension = Path(file.filename).suffix.lower()
+    
+    # Read file content
+    content = await file.read()
+    await file.seek(0)  # Reset file pointer
+    
+    if progress_callback:
+        await progress_callback("reading", 15, "Файл мазмунини ўқиш...")
+    
+    # Process based on file type
+    if file_extension == '.pdf':
+        docs = await process_pdf_with_progress(content, file.filename, progress_callback)
+    elif file_extension in ['.docx', '.doc']:
+        docs = await process_docx_with_progress(content, file.filename, progress_callback)
+    elif file_extension in ['.txt', '.md', '.py']:
+        docs = await process_text_with_progress(content, file.filename, progress_callback)
+    else:
+        raise ValueError(f"Unsupported file type: {file_extension}")
+    
+    if progress_callback:
+        await progress_callback("chunking", 70, "Ҳужжатни бўлаклаш...")
+    
+    # Split documents into chunks
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=config.get("chunk_size", 1000),
+        chunk_overlap=config.get("chunk_overlap", 200)
+    )
+    
+    split_docs = text_splitter.split_documents(docs)
+    
+    if progress_callback:
+        await progress_callback("processing", 85, f"{len(split_docs)} чанк тайёр")
+    
+    # Add uploaded filename to metadata
+    for doc in split_docs:
+        doc.metadata["uploaded_filename"] = file.filename
+        doc.metadata["upload_timestamp"] = datetime.now().isoformat()
+    
+    message = f"Processed {len(split_docs)} chunks from uploaded document"
+    
+    if progress_callback:
+        await progress_callback("completed", 100, "Ишлов бериш тугатилди")
+    
+    return split_docs, message
+
+
+async def process_pdf_with_progress(content: bytes, filename: str, progress_callback=None) -> List[Document]:
+    """Process PDF with progress tracking"""
+    if progress_callback:
+        await progress_callback("pdf_parsing", 25, "PDF файлини тахлил қилиш...")
+    
+    from PyPDF2 import PdfReader
+    import io
+    
+    pdf_reader = PdfReader(io.BytesIO(content))
+    documents = []
+    
+    total_pages = len(pdf_reader.pages)
+    
+    for i, page in enumerate(pdf_reader.pages):
+        if progress_callback:
+            page_progress = 25 + (i / total_pages) * 40  # Progress from 25% to 65%
+            await progress_callback("pdf_pages", page_progress, f"PDF саҳифа {i+1}/{total_pages} ни ўқиш...")
+        
+        text = page.extract_text()
+        if text.strip():
+            doc = Document(
+                page_content=text,
+                metadata={
+                    "source": f"uploaded_{filename}",
+                    "page": i + 1,
+                    "total_pages": total_pages
+                }
+            )
+            documents.append(doc)
+    
+    return documents
+
+
+async def process_docx_with_progress(content: bytes, filename: str, progress_callback=None) -> List[Document]:
+    """Process DOCX with progress tracking"""
+    if progress_callback:
+        await progress_callback("docx_parsing", 30, "DOCX файлини тахлил қилиш...")
+    
+    from docx import Document as DocxDocument
+    import io
+    
+    doc = DocxDocument(io.BytesIO(content))
+    
+    if progress_callback:
+        await progress_callback("docx_text", 50, "DOCX матнини чиқариш...")
+    
+    text = "\n".join([paragraph.text for paragraph in doc.paragraphs if paragraph.text.strip()])
+    
+    document = Document(
+        page_content=text,
+        metadata={
+            "source": f"uploaded_{filename}",
+            "paragraphs": len(doc.paragraphs)
+        }
+    )
+    
+    return [document]
+
+
+async def process_text_with_progress(content: bytes, filename: str, progress_callback=None) -> List[Document]:
+    """Process text files with progress tracking"""
+    if progress_callback:
+        await progress_callback("text_parsing", 40, "Матн файлини ўқиш...")
+    
+    try:
+        text = content.decode('utf-8')
+    except UnicodeDecodeError:
+        try:
+            text = content.decode('latin-1')
+        except UnicodeDecodeError:
+            text = content.decode('utf-8', errors='ignore')
+    
+    if progress_callback:
+        await progress_callback("text_processed", 60, "Матн тайёр")
+    
+    document = Document(
+        page_content=text,
+        metadata={
+            "source": f"uploaded_{filename}",
+            "encoding": "utf-8",
+            "lines": len(text.split('\n'))
+        }
+    )
+    
+    return [document]
 
 
 def check_available_models(endpoint: str, api_key: str = "EMPTY") -> List[str]:
@@ -1295,6 +1617,206 @@ async def get_user_chats(user_id: str):
     except Exception as e:
         logger.error(f"User chats error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/v1/documents/upload", response_model=DocumentUploadResponse)
+async def upload_document(file: UploadFile = File(...)):
+    """Ҳужжат юклаш ва векторлаштириш"""
+    start_time = time.time()
+    
+    try:
+        if not vectorstore or not qdrant_client:
+            raise HTTPException(status_code=503, detail="Vector store not initialized")
+        
+        # Validate file
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No file provided")
+        
+        # Check file size (limit to 50MB)
+        file_size = 0
+        content = await file.read()
+        file_size = len(content)
+        
+        if file_size > 50 * 1024 * 1024:  # 50MB limit
+            raise HTTPException(status_code=400, detail="File too large. Maximum size is 50MB")
+        
+        # Reset file pointer
+        await file.seek(0)
+        
+        # Get config
+        config = load_config()
+        
+        # Process the uploaded document
+        split_docs, process_message = await process_uploaded_document(file, config)
+        
+        # Add documents to vector store
+        vectorstore.add_documents(split_docs)
+        
+        # Save file to documents directory
+        documents_path = Path(config["documents_path"])
+        documents_path.mkdir(exist_ok=True)
+        
+        file_path = documents_path / file.filename
+        with open(file_path, "wb") as f:
+            await file.seek(0)
+            content = await file.read()
+            f.write(content)
+        
+        processing_time = time.time() - start_time
+        
+        logger.info(f"Successfully uploaded and processed document: {file.filename}")
+        
+        return DocumentUploadResponse(
+            success=True,
+            message=f"Document successfully uploaded and vectorized. {process_message}",
+            filename=file.filename,
+            file_size=file_size,
+            chunks_added=len(split_docs),
+            processing_time=round(processing_time, 2)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        processing_time = time.time() - start_time
+        logger.error(f"Document upload error: {e}")
+        
+        return DocumentUploadResponse(
+            success=False,
+            message=f"Failed to process document: {str(e)}",
+            filename=file.filename if file.filename else "unknown",
+            file_size=file_size,
+            chunks_added=0,
+            processing_time=round(processing_time, 2)
+        )
+
+
+@app.get("/v1/documents/list", response_model=DocumentListResponse)
+async def list_documents():
+    """Ҳужжатлар рўйхатини олиш"""
+    try:
+        config = load_config()
+        documents_path = Path(config["documents_path"])
+        
+        if not documents_path.exists():
+            return DocumentListResponse(
+                success=True,
+                message="Documents directory does not exist",
+                files=[],
+                total_files=0,
+                total_size=0
+            )
+        
+        files_info = []
+        total_size = 0
+        
+        # Supported file extensions
+        supported_extensions = {'.pdf', '.docx', '.doc', '.txt', '.md', '.py'}
+        
+        for file_path in documents_path.iterdir():
+            if file_path.is_file() and file_path.suffix.lower() in supported_extensions:
+                stat = file_path.stat()
+                file_size = stat.st_size
+                total_size += file_size
+                
+                files_info.append(FileInfo(
+                    filename=file_path.name,
+                    file_size=file_size,
+                    created_at=datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                    modified_at=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    file_extension=file_path.suffix.lower()
+                ))
+        
+        # Sort files by modified time (newest first)
+        files_info.sort(key=lambda x: x.modified_at, reverse=True)
+        
+        return DocumentListResponse(
+            success=True,
+            message=f"Found {len(files_info)} documents",
+            files=files_info,
+            total_files=len(files_info),
+            total_size=total_size
+        )
+        
+    except Exception as e:
+        logger.error(f"Document list error: {e}")
+        return DocumentListResponse(
+            success=False,
+            message=f"Failed to list documents: {str(e)}",
+            files=[],
+            total_files=0,
+            total_size=0
+        )
+
+
+@app.delete("/v1/documents/delete", response_model=DocumentDeleteResponse)
+async def delete_document(request: DocumentDeleteRequest):
+    """Ҳужжатни ўчириш ва унинг векторларини тозалаш"""
+    try:
+        if not vectorstore or not qdrant_client:
+            raise HTTPException(status_code=503, detail="Vector store not initialized")
+        
+        config = load_config()
+        documents_path = Path(config["documents_path"])
+        file_path = documents_path / request.filename
+        
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        if not file_path.is_file():
+            raise HTTPException(status_code=400, detail="Path is not a file")
+        
+        # Check if file is in documents directory (security check)
+        if not str(file_path.resolve()).startswith(str(documents_path.resolve())):
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        # Delete embeddings from vector store first
+        embeddings_deleted = 0
+        try:
+            # Try different source identifiers to find the embeddings
+            source_identifiers = [
+                request.filename,  # Direct filename
+                f"uploaded_{request.filename}",  # With uploaded prefix
+            ]
+            
+            for source_id in source_identifiers:
+                deleted_count = vectorstore.delete_documents_by_source(source_id)
+                embeddings_deleted += deleted_count
+                if deleted_count > 0:
+                    logger.info(f"Deleted {deleted_count} embeddings for source: {source_id}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to delete embeddings for {request.filename}: {e}")
+            # Continue with file deletion even if embeddings deletion fails
+        
+        # Delete the file from filesystem
+        file_path.unlink()
+        
+        logger.info(f"Successfully deleted document: {request.filename} (with {embeddings_deleted} embeddings)")
+        
+        message = f"Document '{request.filename}' successfully deleted"
+        if embeddings_deleted > 0:
+            message += f" along with {embeddings_deleted} embeddings"
+        else:
+            message += " (no embeddings found to delete)"
+        
+        return DocumentDeleteResponse(
+            success=True,
+            message=message,
+            filename=request.filename,
+            embeddings_deleted=embeddings_deleted
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Document delete error: {e}")
+        return DocumentDeleteResponse(
+            success=False,
+            message=f"Failed to delete document: {str(e)}",
+            filename=request.filename,
+            embeddings_deleted=0
+        )
 
 
 @app.exception_handler(Exception)

@@ -33,14 +33,20 @@ COPY database/ ./database/
 COPY config.env .
 COPY README.md .
 
-# Copy documents directory
+# Copy startup script
+COPY startup.sh .
+
+# Copy documents directory (this will be the seed directory in the container)
 COPY documents/ ./documents/
 
 # Create necessary directories
 RUN mkdir -p /app/data /app/qdrant_storage
 
-# Create non-root user for security
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+# Make startup script executable
+RUN chmod +x startup.sh
+
+# Create non-root user for security (matching host user ID)
+RUN useradd -m -u 1004 appuser && chown -R appuser:appuser /app
 USER appuser
 
 # Expose ports
@@ -50,5 +56,5 @@ EXPOSE 8080 8081
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8080/health || curl -f http://localhost:8081/health || exit 1
 
-# Default command
-CMD ["python", "app_postgres.py"] 
+# Default command - use startup script
+CMD ["./startup.sh"] 

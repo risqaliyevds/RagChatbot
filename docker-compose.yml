@@ -83,7 +83,10 @@ services:
       - HOST=0.0.0.0
       - PORT=8081
     volumes:
-      - ./documents:/app/documents:ro
+      # Mount host documents folder directly for file uploads (read-write)
+      - ./documents:/app/documents
+      # Create backup mount point for startup script
+      - ./documents:/app/documents_seed:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -102,10 +105,17 @@ services:
     build: .
     image: chatbot:latest
     container_name: gradio_app
-    command: ["python", "app/gradio_app.py"]
+    command: ["./startup.sh", "python", "app/gradio_app.py"]
     network_mode: host
     environment:
       - API_BASE_URL=http://localhost:8081
+      # Ensure Gradio uses the same documents path
+      - DOCUMENTS_PATH=/app/documents
+    volumes:
+      # Mount host documents folder directly (same as main app)
+      - ./documents:/app/documents
+      # Create backup mount point for startup script
+      - ./documents:/app/documents_seed:ro
     depends_on:
       chatbot_app:
         condition: service_healthy

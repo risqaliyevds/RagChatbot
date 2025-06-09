@@ -181,6 +181,62 @@ class GradioRAGClient:
         except Exception as e:
             return {"success": False, "error": f"Хато: {str(e)}"}
 
+    def upload_document(self, file_path: str) -> dict:
+        """Ҳужжат юклаш"""
+        try:
+            with open(file_path, 'rb') as f:
+                files = {'file': (os.path.basename(file_path), f, 'application/octet-stream')}
+                
+                response = requests.post(
+                    f"{self.base_url}/v1/documents/upload",
+                    files=files,
+                    timeout=60  # Longer timeout for file upload
+                )
+                
+                if response.status_code == 200:
+                    return {"success": True, "data": response.json()}
+                else:
+                    return {"success": False, "error": f"HTTP {response.status_code}: {response.text}"}
+                    
+        except Exception as e:
+            return {"success": False, "error": f"Хато: {str(e)}"}
+
+    def list_documents(self) -> dict:
+        """Ҳужжатлар рўйхатини олиш"""
+        try:
+            response = requests.get(
+                f"{self.base_url}/v1/documents/list",
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                return {"success": True, "data": response.json()}
+            else:
+                return {"success": False, "error": f"HTTP {response.status_code}: {response.text}"}
+                
+        except Exception as e:
+            return {"success": False, "error": f"Хато: {str(e)}"}
+
+    def delete_document(self, filename: str) -> dict:
+        """Ҳужжатни ўчириш"""
+        try:
+            payload = {"filename": filename}
+            
+            response = requests.delete(
+                f"{self.base_url}/v1/documents/delete",
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                return {"success": True, "data": response.json()}
+            else:
+                return {"success": False, "error": f"HTTP {response.status_code}: {response.text}"}
+                
+        except Exception as e:
+            return {"success": False, "error": f"Хато: {str(e)}"}
+
 # Global client instance
 client = GradioRAGClient()
 
@@ -362,6 +418,260 @@ def check_user_session_status(user_id: str) -> str:
     else:
         return f"❌ Хато: {result.get('error', 'Номаълум хато')}"
 
+
+def upload_document_handler(file, progress=gr.Progress()) -> str:
+    """Ҳужжат юклаш ишловчиси прогресс билан"""
+    if file is None:
+        return "❌ Файл танланмаган"
+    
+    try:
+        # Initialize progress tracking
+        progress(0, desc="Файлни тайёрлаш...")
+        
+        # Get file size for better progress tracking
+        import os
+        file_size = os.path.getsize(file.name) if os.path.exists(file.name) else 0
+        
+        # Convert file size to readable format
+        if file_size < 1024:
+            size_str = f"{file_size} байт"
+        elif file_size < 1024 * 1024:
+            size_str = f"{file_size / 1024:.1f} КБ"
+        else:
+            size_str = f"{file_size / (1024 * 1024):.1f} МБ"
+        
+        # Stage 1: File validation
+        progress(0.05, desc="Файлни текшириш...")
+        import time
+        time.sleep(0.2)  # Small delay for visual feedback
+        
+        # Stage 2: File reading
+        progress(0.15, desc=f"Файлни ўқиш ({size_str})...")
+        time.sleep(0.3)
+        
+        # Stage 3: Starting upload
+        progress(0.25, desc="Серверга юклаш...")
+        
+        # Simulate realistic upload progress based on file size
+        upload_stages = [
+            (0.3, "Файлни серверга юклаш..."),
+            (0.35, "Серверда қабул қилинмоқда..."),
+            (0.4, "Файл текширилмоқда..."),
+        ]
+        
+        for stage_progress, stage_desc in upload_stages:
+            progress(stage_progress, desc=stage_desc)
+            # Adjust timing based on file size
+            if file_size > 5 * 1024 * 1024:  # Files larger than 5MB
+                time.sleep(0.5)
+            else:
+                time.sleep(0.2)
+        
+        # Upload with progress simulation
+        result = client.upload_document(file.name)
+        
+        # Stage 4: Processing on server (varies by file type)
+        file_ext = os.path.splitext(file.name)[1].lower()
+        if file_ext == '.pdf':
+            progress(0.5, desc="PDF файлини тахлил қилиш...")
+            time.sleep(0.8)
+        elif file_ext in ['.docx', '.doc']:
+            progress(0.5, desc="Word ҳужжатини ишлаш...")
+            time.sleep(0.6)
+        else:
+            progress(0.5, desc="Матн файлини ишлаш...")
+            time.sleep(0.4)
+        
+        # Stage 5: Document processing stages
+        processing_stages = [
+            (0.6, "Матнни чиқариш..."),
+            (0.7, "Ҳужжатни бўлаклаш..."),
+            (0.8, "Метаданларни тайёрлаш..."),
+        ]
+        
+        for stage_progress, stage_desc in processing_stages:
+            progress(stage_progress, desc=stage_desc)
+            time.sleep(0.3)
+        
+        # Stage 6: Creating embeddings (most time-consuming)
+        embedding_stages = [
+            (0.85, "Векторлар яратиш..."),
+            (0.9, "Векторларни сақлаш..."),
+            (0.95, "Индекслаш..."),
+        ]
+        
+        for stage_progress, stage_desc in embedding_stages:
+            progress(stage_progress, desc=stage_desc)
+            # Longer delay for embedding creation (realistic timing)
+            if file_size > 1024 * 1024:  # Files larger than 1MB
+                time.sleep(0.5)
+            else:
+                time.sleep(0.3)
+        
+        if result.get("success"):
+            progress(1.0, desc="✅ Муваффақиятли тугатилди!")
+            
+            data = result.get("data", {})
+            filename = data.get("filename", "")
+            file_size = data.get("file_size", 0)
+            chunks_added = data.get("chunks_added", 0)
+            processing_time = data.get("processing_time", 0)
+            message = data.get("message", "")
+            
+            # Convert file size to readable format
+            if file_size < 1024:
+                size_str = f"{file_size} байт"
+            elif file_size < 1024 * 1024:
+                size_str = f"{file_size / 1024:.1f} КБ"
+            else:
+                size_str = f"{file_size / (1024 * 1024):.1f} МБ"
+            
+            return f"""
+**✅ Ҳужжат муваффақиятли юкланди!**
+
+**Файл номи:** {filename}
+**Файл ҳажми:** {size_str}
+**Қўшилган чанклар:** {chunks_added}
+**Ишлов бериш вақти:** {processing_time} сония
+
+**Хабар:** {message}
+
+🎉 **Энди сиз юкланган ҳужжат бўйича саволлар бера оласиз!**
+"""
+        else:
+            progress(1.0, desc="❌ Хато юз берди")
+            error_msg = result.get("error", "Номаълум хато")
+            return f"❌ Ҳужжат юклашда хато: {error_msg}"
+            
+    except Exception as e:
+        progress(1.0, desc="❌ Хато юз берди")
+        return f"❌ Хато: {str(e)}"
+
+
+def list_documents_handler() -> str:
+    """Ҳужжатлар рўйхатини кўрсатиш ишловчиси"""
+    try:
+        result = client.list_documents()
+        
+        if result.get("success"):
+            data = result.get("data", {})
+            files = data.get("files", [])
+            total_files = data.get("total_files", 0)
+            total_size = data.get("total_size", 0)
+            
+            if not files:
+                return "📂 Ҳужжатлар папкаси бўш"
+            
+            # Convert total size to readable format
+            if total_size < 1024:
+                total_size_str = f"{total_size} байт"
+            elif total_size < 1024 * 1024:
+                total_size_str = f"{total_size / 1024:.1f} КБ"
+            else:
+                total_size_str = f"{total_size / (1024 * 1024):.1f} МБ"
+            
+            output = f"""
+## 📂 Ҳужжатлар рўйхати
+
+**Жами файллар:** {total_files}
+**Жами ҳажм:** {total_size_str}
+
+---
+
+"""
+            
+            for i, file_info in enumerate(files, 1):
+                filename = file_info.get("filename", "")
+                file_size = file_info.get("file_size", 0)
+                created_at = file_info.get("created_at", "")
+                modified_at = file_info.get("modified_at", "")
+                file_extension = file_info.get("file_extension", "")
+                
+                # Convert file size to readable format
+                if file_size < 1024:
+                    size_str = f"{file_size} байт"
+                elif file_size < 1024 * 1024:
+                    size_str = f"{file_size / 1024:.1f} КБ"
+                else:
+                    size_str = f"{file_size / (1024 * 1024):.1f} МБ"
+                
+                # Format dates
+                try:
+                    created_date = datetime.fromisoformat(created_at.replace('Z', '+00:00')).strftime("%Y-%m-%d %H:%M")
+                    modified_date = datetime.fromisoformat(modified_at.replace('Z', '+00:00')).strftime("%Y-%m-%d %H:%M")
+                except:
+                    created_date = created_at[:16] if len(created_at) >= 16 else created_at
+                    modified_date = modified_at[:16] if len(modified_at) >= 16 else modified_at
+                
+                # Get file type emoji
+                emoji = "📄"
+                if file_extension == ".pdf":
+                    emoji = "📕"
+                elif file_extension in [".docx", ".doc"]:
+                    emoji = "📘"
+                elif file_extension == ".txt":
+                    emoji = "📝"
+                elif file_extension == ".md":
+                    emoji = "📋"
+                elif file_extension == ".py":
+                    emoji = "🐍"
+                
+                output += f"""
+### {emoji} {i}. {filename}
+
+**Ҳажм:** {size_str} | **Тур:** {file_extension.upper()} | **Яратилди:** {created_date} | **Ўзгартирилди:** {modified_date}
+
+---
+"""
+            
+            return output
+            
+        else:
+            error_msg = result.get("error", "Номаълум хато")
+            return f"❌ Ҳужжатлар рўйхатини олишда хато: {error_msg}"
+            
+    except Exception as e:
+        return f"❌ Хато: {str(e)}"
+
+
+def delete_document_handler(filename: str) -> str:
+    """Ҳужжатни ўчириш ишловчиси"""
+    if not filename or filename.strip() == "":
+        return "❌ Файл номи киритилмаган"
+    
+    try:
+        result = client.delete_document(filename.strip())
+        
+        if result.get("success"):
+            data = result.get("data", {})
+            message = data.get("message", "")
+            deleted_filename = data.get("filename", filename)
+            embeddings_deleted = data.get("embeddings_deleted", 0)
+            
+            output = f"""
+**✅ Ҳужжат муваффақиятли ўчирилди!**
+
+**Файл номи:** {deleted_filename}
+
+**Ўчирилган векторлар:** {embeddings_deleted}
+
+**Хабар:** {message}
+"""
+            
+            if embeddings_deleted > 0:
+                output += "\n\n**🧹 Векторлар базаси тозаланди:** Файлга тааллуқли барча маълумотлар тизимдан олинди."
+            else:
+                output += "\n\n**⚠️ Векторлар топилмади:** Ушбу файл учун векторлар топилмади (илгари ишланмаган файл бўлиши мумкин)."
+            
+            return output
+            
+        else:
+            error_msg = result.get("error", "Номаълум хато")
+            return f"❌ Ҳужжатни ўчиришда хато: {error_msg}"
+            
+    except Exception as e:
+        return f"❌ Хато: {str(e)}"
+
 # Create Gradio interface
 with gr.Blocks(title="Platform Assistant RAG Chatbot", theme=gr.themes.Soft()) as demo:
     gr.Markdown("""
@@ -432,6 +742,85 @@ with gr.Blocks(title="Platform Assistant RAG Chatbot", theme=gr.themes.Soft()) a
         
         chats_output = gr.Markdown(label="Фойдаланувчи чатлари")
     
+    with gr.Tab("📄 Файл бошқаруви"):
+        gr.Markdown("""
+        ### 📄 Файл бошқаруви ва векторлаштириш
+        
+        Бу бўлимда сиз ҳужжатларни юклаш, рўйхатини кўриш ва ўчириш амалларини бажара оласиз.
+        """)
+        
+        with gr.Tab("📤 Файл юклаш"):
+            gr.Markdown("""
+            **Қўллаб-қувватланадиган форматлар:**
+            - PDF файллари (.pdf)
+            - Word ҳужжатлари (.docx, .doc)
+            - Матн файллари (.txt)
+            - Markdown файллари (.md)
+            - Python файллари (.py)
+            
+            **Максимал файл ҳажми:** 50 МБ
+            """)
+            
+            with gr.Row():
+                with gr.Column(scale=2):
+                    file_upload = gr.File(
+                        label="Ҳужжат танланг",
+                        file_types=[".pdf", ".docx", ".doc", ".txt", ".md", ".py"],
+                        type="filepath"
+                    )
+                    upload_btn = gr.Button("📤 Ҳужжатни юклаш", variant="primary", size="lg")
+                
+                with gr.Column(scale=1):
+                    gr.Markdown("""
+                    **Эслатма:**
+                    - Ҳужжат юкланганидан сўнг у автоматик равишда ишланади
+                    - Векторлаштириш жараёни бир неча дақиқа давом этиши мумкин
+                    - Юкланган ҳужжатлар `documents/` папкасида сақланади
+                    """)
+            
+            upload_output = gr.Markdown(label="Юклаш натижаси")
+        
+        with gr.Tab("📂 Файллар рўйхати"):
+            gr.Markdown("""
+            ### 📂 Мавжуд ҳужжатлар рўйхати
+            
+            Бу ерда сиз барча юкланган ҳужжатларни кўра оласиз.
+            """)
+            
+            with gr.Row():
+                list_files_btn = gr.Button("🔄 Рўйхатни янгилаш", variant="primary")
+                
+            files_list_output = gr.Markdown(label="Файллар рўйхати")
+        
+        with gr.Tab("🗑️ Файл ўчириш"):
+            gr.Markdown("""
+            ### 🗑️ Ҳужжатни ўчириш
+            
+            Ҳужжатни тизимдан бутунлай ўчиришучун файл номини киритинг.
+            
+            **Огоҳлантириш:** Бу амал қайтарилмас!
+            """)
+            
+            with gr.Row():
+                with gr.Column(scale=2):
+                    filename_input = gr.Textbox(
+                        label="Файл номи",
+                        placeholder="Масалан: my_document.pdf",
+                        info="Ўчириш учун анқо файл номини киритинг"
+                    )
+                    delete_btn = gr.Button("🗑️ Файлни ўчириш", variant="stop")
+                
+                with gr.Column(scale=1):
+                    gr.Markdown("""
+                    **Эслатма:**
+                    - Файл номини аниқ киритинг
+                    - Файл тизимдан бутунлай ўчирилади
+                    - Ушбу амал қайтарилмас
+                    - Файл векторлар базасидан ҳам олинади
+                    """)
+            
+            delete_output = gr.Markdown(label="Ўчириш натижаси")
+    
     # Event handlers
     def send_message_handler(message, history, user_id, chat_id):
         return chat_interface(message, history, user_id, chat_id)
@@ -476,6 +865,23 @@ with gr.Blocks(title="Platform Assistant RAG Chatbot", theme=gr.themes.Soft()) a
         load_user_chats,
         inputs=[chats_user_id],
         outputs=chats_output
+    )
+    
+    upload_btn.click(
+        upload_document_handler,
+        inputs=[file_upload],
+        outputs=upload_output
+    )
+    
+    list_files_btn.click(
+        list_documents_handler,
+        outputs=files_list_output
+    )
+    
+    delete_btn.click(
+        delete_document_handler,
+        inputs=[filename_input],
+        outputs=delete_output
     )
 
 if __name__ == "__main__":
