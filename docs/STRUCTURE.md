@@ -23,7 +23,7 @@ This document outlines the organized structure of the RAG Chatbot project.
 ### Development Files
 - `.gitignore` - Git exclusions
 - `.git/` - Git repository data
-- `venv/` - Python virtual environment
+- `startup.sh` - Application startup script
 
 ## Directories
 
@@ -52,7 +52,13 @@ Deployment and utility scripts:
 
 ### `/documents/`
 RAG knowledge base documents:
-- `user_manual_mkbank_uz_uz.pdf` - Bank user manual (Uzbek)
+- Document storage directory for uploaded files
+- Processed automatically by the RAG system
+
+### `/tests/`
+Test files and test data:
+- `test_volume_persistence.sh` - Docker volume persistence test script
+- `test_progress_document.md` - Large test document for progress bar testing
 
 ### `/data/`
 Runtime data directories (created by Docker):
@@ -62,12 +68,14 @@ Runtime data directories (created by Docker):
 
 ## Cleaned Up Items
 
-The following items were removed during cleanup:
-- `*.log` files (app.log, app_new.log, gradio.log)
-- `chat_history.json` (temporary test data)
+The following items were removed during project optimization:
+- `*.log` files (app.log, logs/fastapi.log, logs/fastapi.pid)
 - `__pycache__/` directories (Python cache)
+- `venv/` directory (virtual environment - 3.5GB+ saved)
+- `docker_images_tar/` directory (Docker image archives - 3.6GB+ saved)
+- Test files moved to `/tests/` directory for better organization
 
-These items are now prevented from being tracked by the `.gitignore` file.
+These items are now prevented from being tracked by the enhanced `.gitignore` file.
 
 ## File Organization Principles
 
@@ -76,8 +84,9 @@ These items are now prevented from being tracked by the `.gitignore` file.
 3. **Database**: All database-related code and scripts in `/database/`
 4. **Documentation**: Centralized in `/docs/` directory
 5. **Scripts**: Deployment and utility scripts in `/scripts/`
-6. **Data**: Runtime data isolated in `/data/` (gitignored)
-7. **Documents**: Knowledge base documents in `/documents/`
-8. **Temporary Files**: Automatically excluded via `.gitignore`
+6. **Tests**: Test files and test data in `/tests/`
+7. **Data**: Runtime data isolated in `/data/` (gitignored)
+8. **Documents**: Knowledge base documents in `/documents/`
+9. **Temporary Files**: Automatically excluded via `.gitignore`
 
 This structure ensures a clean, maintainable, and well-organized codebase with clear separation of concerns. 

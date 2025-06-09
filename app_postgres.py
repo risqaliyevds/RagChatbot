@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, status, UploadFile, File, Form
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
@@ -272,6 +272,9 @@ class DocumentDeleteResponse(BaseModel):
     embeddings_deleted: int = Field(default=0, description="Ўчирилган векторлар сони")
 
 
+
+
+
 class DocumentUploadProgress(BaseModel):
     """Ҳужжат юклаш прогресс модели"""
     stage: str = Field(..., description="Ҳозирги босқич")
@@ -463,7 +466,7 @@ class SimpleQdrantVectorStore:
         self.embeddings = embeddings
         self.config = config
     
-    def add_documents(self, documents: List[Document], embedding_dim: int = None):
+    async def add_documents(self, documents: List[Document], embedding_dim: int = None, progress_callback=None):
         """Add documents to the vector store"""
         try:
             # Get embedding dimension from first document if not provided
@@ -508,10 +511,14 @@ class SimpleQdrantVectorStore:
                     )
                 )
             
-            # Check if collection already has documents
+            # Always add new documents (removed the early return bug)
             collection_info = self.client.get_collection(self.collection_name)
-            if collection_info.points_count > 0:
-                logger.info(f"Collection already contains {collection_info.points_count} documents")
+            existing_count = collection_info.points_count
+            logger.info(f"Collection currently contains {existing_count} documents. Adding {len(documents)} new documents.")
+            
+            # Debug: Check if documents list is empty
+            if not documents:
+                logger.warning("⚠️ No documents to add - documents list is empty!")
                 return
             
             # Prepare documents for embedding
@@ -520,19 +527,39 @@ class SimpleQdrantVectorStore:
             
             logger.info(f"Embedding {len(texts)} documents...")
             
-            # Generate embeddings in batches
-            batch_size = 10  # Process in smaller batches to avoid memory issues
+            # Generate embeddings in batches - increased batch size for better performance
+            batch_size = 50  # Larger batches for faster processing while avoiding memory issues
             all_embeddings = []
+            total_batches = (len(texts) + batch_size - 1) // batch_size
             
             for i in range(0, len(texts), batch_size):
                 batch_texts = texts[i:i + batch_size]
                 batch_embeddings = self.embeddings.embed_documents(batch_texts)
                 all_embeddings.extend(batch_embeddings)
-                logger.info(f"Processed batch {i//batch_size + 1}/{(len(texts) + batch_size - 1)//batch_size}")
+                
+                current_batch = i//batch_size + 1
+                progress_percent = (current_batch / total_batches) * 100
+                logger.info(f"📊 Embedding progress: {current_batch}/{total_batches} batches ({progress_percent:.1f}%)")
+                
+                # Store progress for SSE endpoint access
+                if progress_callback:
+                    await progress_callback(f"embedding_batch_{current_batch}", 30 + (progress_percent * 0.4), 
+                                          f"Embedding batch {current_batch}/{total_batches}")
+                
+                # Add small delay for very fast processing to allow progress updates
+                if total_batches > 10:
+                    await asyncio.sleep(0.1)
             
-            # Create points for Qdrant
+            # Create points for Qdrant - use UUID-based IDs for reliability
             points = []
+            point_ids = []
+            chunks_data = []
+            
             for i, (text, metadata, embedding) in enumerate(zip(texts, metadatas, all_embeddings)):
+                # Generate unique point ID using UUID
+                import time
+                point_id = int(str(int(time.time() * 1000))[-10:] + str(i).zfill(6))  # Timestamp + index
+                
                 # Ensure metadata is JSON serializable
                 clean_metadata = {}
                 for key, value in metadata.items():
@@ -545,20 +572,63 @@ class SimpleQdrantVectorStore:
                 clean_metadata["content"] = text[:1000]  # Limit content length
                 
                 point = PointStruct(
-                    id=i,
+                    id=point_id,
                     vector=embedding,
                     payload=clean_metadata
                 )
                 points.append(point)
+                point_ids.append(point_id)
+                
+                # Store chunk data for database tracking
+                chunks_data.append({
+                    "content": text,
+                    "metadata": clean_metadata
+                })
             
             # Upload points to Qdrant
             logger.info(f"Uploading {len(points)} points to Qdrant...")
-            self.client.upsert(
-                collection_name=self.collection_name,
-                points=points
-            )
+            try:
+                self.client.upsert(
+                    collection_name=self.collection_name,
+                    points=points
+                )
+                logger.info(f"✅ Successfully uploaded {len(points)} points to Qdrant")
+                
+                # Store point IDs in database for tracking
+                try:
+                    # Extract filename from first document metadata
+                    filename = None
+                    file_size = 0
+                    for doc in documents:
+                        if 'uploaded_filename' in doc.metadata:
+                            filename = doc.metadata['uploaded_filename']
+                            break
+                    
+                    if filename and hasattr(self, 'db_manager') and self.db_manager:
+                        # Try to get file size from config or metadata
+                        file_size = sum(len(doc.page_content) for doc in documents)
+                        
+                        success = self.db_manager.store_vector_points(
+                            filename=filename,
+                            point_ids=point_ids,
+                            file_size=file_size,
+                            collection_name=self.collection_name,
+                            chunks_data=chunks_data
+                        )
+                        if success:
+                            logger.info(f"📊 Tracked {len(point_ids)} point IDs in database for {filename}")
+                        else:
+                            logger.warning(f"⚠️ Failed to track point IDs in database for {filename}")
+                    else:
+                        logger.warning("⚠️ No filename found in document metadata or database manager not available")
+                except Exception as tracking_error:
+                    logger.error(f"❌ Failed to store vector tracking data: {tracking_error}")
+                    
+            except Exception as upload_error:
+                logger.error(f"❌ Failed to upload points to Qdrant: {upload_error}")
+                raise
             
-            logger.info(f"Successfully added {len(documents)} documents to vector store")
+            logger.info(f"Successfully added {len(documents)} documents to vector store (total: {existing_count + len(documents)})")
             
         except Exception as e:
             logger.error(f"Error adding documents to vector store: {e}")
@@ -644,58 +714,155 @@ class SimpleQdrantVectorStore:
             return []
 
     def delete_documents_by_source(self, source_identifier: str) -> int:
-        """Delete documents from the vector store based on source identifier"""
+        """
+        Enhanced document deletion using PostgreSQL point ID tracking for reliable cleanup
+        
+        This method uses the database tracking system to find exact point IDs,
+        ensuring complete and accurate vector deletion.
+        """
         try:
-            logger.info(f"Deleting documents with source identifier: {source_identifier}")
+            logger.info(f"🗑️ Starting database-tracked vector deletion for: {source_identifier}")
             
-            # First, find all points that match the source identifier
-            # We'll check both 'source' and 'uploaded_filename' fields
-            filter_conditions = Filter(
-                should=[
-                    FieldCondition(
-                        key="source",
-                        match=MatchValue(value=source_identifier)
-                    ),
-                    FieldCondition(
-                        key="uploaded_filename", 
-                        match=MatchValue(value=source_identifier)
-                    ),
-                    FieldCondition(
-                        key="source",
-                        match=MatchValue(value=f"uploaded_{source_identifier}")
+            total_deleted = 0
+            
+            # METHOD 1: Use database tracking (primary method)
+            if hasattr(self, 'db_manager') and self.db_manager:
+                try:
+                    # Get tracked point IDs from database
+                    tracked_point_ids = self.db_manager.get_vector_points_for_file(
+                        filename=source_identifier,
+                        collection_name=self.collection_name
                     )
+                    
+                    if tracked_point_ids:
+                        logger.info(f"📊 Found {len(tracked_point_ids)} tracked point IDs for {source_identifier}")
+                        
+                        # Delete vectors using exact point IDs
+                        try:
+                            self.client.delete(
+                                collection_name=self.collection_name,
+                                points_selector=tracked_point_ids
+                            )
+                            
+                            total_deleted = len(tracked_point_ids)
+                            logger.info(f"✅ Successfully deleted {total_deleted} vectors using database tracking")
+                            
+                            # Clean up database tracking records
+                            deleted_records = self.db_manager.delete_vector_points_for_file(
+                                filename=source_identifier,
+                                collection_name=self.collection_name
+                            )
+                            logger.info(f"🧹 Cleaned up {deleted_records} database tracking records")
+                            
+                        except Exception as delete_error:
+                            logger.error(f"❌ Failed to delete vectors from Qdrant: {delete_error}")
+                            return 0
+                            
+                    else:
+                        logger.warning(f"⚠️ No tracked point IDs found for {source_identifier}")
+                        
+                except Exception as db_error:
+                    logger.error(f"❌ Database tracking lookup failed: {db_error}")
+                    
+            else:
+                logger.warning("⚠️ Database manager not available for tracking lookup")
+            
+            # METHOD 2: Fallback to metadata search (if database tracking failed)
+            if total_deleted == 0:
+                logger.info("🔄 Falling back to metadata search method...")
+                
+                # Enhanced source pattern matching for fallback cleanup
+                source_patterns = [
+                    source_identifier,                    # Direct filename match
+                    f"uploaded_{source_identifier}",      # Standard upload prefix
+                    f"documents/{source_identifier}",     # With directory path
+                    f"./{source_identifier}",            # Relative path variant
+                    source_identifier.replace("\\", "/"), # Normalize path separators
+                    os.path.basename(source_identifier),  # Base filename only
                 ]
-            )
+                
+                # Remove duplicates while preserving order
+                unique_patterns = []
+                for pattern in source_patterns:
+                    if pattern not in unique_patterns:
+                        unique_patterns.append(pattern)
+                
+                logger.info(f"🔍 Checking {len(unique_patterns)} source patterns for fallback cleanup")
+                
+                deletion_details = {}
+                
+                # Check each pattern and collect matching points
+                for pattern in unique_patterns:
+                    try:
+                        filter_conditions = Filter(
+                            should=[
+                                FieldCondition(
+                                    key="source",
+                                    match=MatchValue(value=pattern)
+                                ),
+                                FieldCondition(
+                                    key="uploaded_filename", 
+                                    match=MatchValue(value=pattern)
+                                ),
+                                FieldCondition(
+                                    key="filename",
+                                    match=MatchValue(value=pattern)
+                                )
+                            ]
+                        )
+                        
+                        # Scroll through all matching points
+                        search_result = self.client.scroll(
+                            collection_name=self.collection_name,
+                            scroll_filter=filter_conditions,
+                            limit=10000,  # Large limit to get all matching points
+                            with_payload=True
+                        )
+                        
+                        points_to_delete = []
+                        for point in search_result[0]:  # scroll returns tuple (points, next_page_offset)
+                            points_to_delete.append(point.id)
+                            logger.debug(f"Found vector point {point.id} with payload: {point.payload}")
+                        
+                        if points_to_delete:
+                            # Delete the points for this pattern
+                            self.client.delete(
+                                collection_name=self.collection_name,
+                                points_selector=points_to_delete
+                            )
+                            
+                            pattern_deleted = len(points_to_delete)
+                            total_deleted += pattern_deleted
+                            deletion_details[pattern] = pattern_deleted
+                            
+                            logger.info(f"✅ Deleted {pattern_deleted} vectors for pattern: {pattern}")
+                        
+                    except Exception as pattern_error:
+                        logger.warning(f"⚠️ Failed to process pattern '{pattern}': {pattern_error}")
+                        continue
+                
+                # Log fallback results
+                if total_deleted > 0:
+                    logger.info(f"🔄 Fallback deletion completed: {total_deleted} vectors")
+                    for pattern, count in deletion_details.items():
+                        logger.info(f"   - Pattern '{pattern}': {count} vectors")
+                else:
+                    logger.warning(f"❌ No vectors found using fallback method for: {source_identifier}")
             
-            # Get points that match the filter
-            search_result = self.client.scroll(
-                collection_name=self.collection_name,
-                scroll_filter=filter_conditions,
-                limit=10000,  # Large limit to get all matching points
-                with_payload=True
-            )
+            # Final verification (for both methods)
+            if total_deleted > 0:
+                logger.info(f"🎯 Successfully deleted {total_deleted} vectors for {source_identifier}")
+            else:
+                logger.warning(f"❌ No vectors deleted for file: {source_identifier}")
+                logger.info("💡 This might indicate the file was never processed or already deleted")
             
-            points_to_delete = []
-            for point in search_result[0]:  # scroll returns tuple (points, next_page_offset)
-                points_to_delete.append(point.id)
-            
-            if not points_to_delete:
-                logger.info(f"No documents found for source: {source_identifier}")
-                return 0
-            
-            # Delete the points
-            self.client.delete(
-                collection_name=self.collection_name,
-                points_selector=points_to_delete
-            )
-            
-            deleted_count = len(points_to_delete)
-            logger.info(f"Successfully deleted {deleted_count} embeddings for source: {source_identifier}")
-            return deleted_count
+            return total_deleted
             
         except Exception as e:
-            logger.error(f"Error deleting documents from vector store: {e}")
-            raise
+            logger.error(f"❌ Critical error during vector deletion: {e}")
+            logger.exception("Full traceback:")
+            return 0
+    
 
 
 def preprocess_documents(documents: List[Document]) -> List[Document]:
@@ -759,6 +926,11 @@ async def process_uploaded_document(file: UploadFile, config: Dict[str, Any]) ->
     import tempfile
     import shutil
     
+    # Calculate file size
+    file.file.seek(0, 2)  # Seek to end
+    file_size = file.file.tell()  # Get file size
+    file.file.seek(0)  # Reset to beginning
+    
     # Create temporary file
     with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file.filename}") as temp_file:
         # Copy uploaded file content to temporary file
@@ -812,9 +984,15 @@ async def process_uploaded_document(file: UploadFile, config: Dict[str, Any]) ->
         if not processed_docs:
             raise ValueError("Document processing resulted in no valid content")
         
-        # Split documents into chunks
+        # Split documents into chunks - optimize for large documents
+        # Use larger chunks for large documents to reduce processing time
+        adaptive_chunk_size = config["chunk_size"]
+        if file_size > 5 * 1024 * 1024:  # 5MB+
+            adaptive_chunk_size = min(2000, config["chunk_size"] * 2)  # Double chunk size for large files
+            logger.info(f"📈 Using adaptive chunk size {adaptive_chunk_size} for large document")
+        
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=config["chunk_size"],
+            chunk_size=adaptive_chunk_size,
             chunk_overlap=config["chunk_overlap"],
             length_function=len,
         )
@@ -992,7 +1170,7 @@ def check_available_models(endpoint: str, api_key: str = "EMPTY") -> List[str]:
         return []
 
 
-def init_vectorstore(config: Dict[str, Any], documents: List[Document], client: QdrantClient) -> SimpleQdrantVectorStore:
+async def init_vectorstore(config: Dict[str, Any], documents: List[Document], client: QdrantClient) -> SimpleQdrantVectorStore:
     """Initialize vector store with documents"""
     try:
         # Initialize embeddings
@@ -1034,7 +1212,7 @@ def init_vectorstore(config: Dict[str, Any], documents: List[Document], client: 
         processed_docs = preprocess_documents(documents)
         logger.info(f"Preprocessed {len(processed_docs)} documents")
         
-        # Create vector store
+        # Create vector store with database manager for tracking
         vectorstore = SimpleQdrantVectorStore(
             client=client,
             collection_name=config["qdrant_collection_name"],
@@ -1042,8 +1220,12 @@ def init_vectorstore(config: Dict[str, Any], documents: List[Document], client: 
             config=config
         )
         
+        # Inject database manager for vector tracking
+        from database import get_db_manager
+        vectorstore.db_manager = get_db_manager()
+        
         # Add documents to vector store
-        vectorstore.add_documents(processed_docs)
+        await vectorstore.add_documents(processed_docs)
         
         return vectorstore
         
@@ -1287,7 +1469,7 @@ async def initialize_rag_system():
         
         # Initialize vector store
         logger.info("Initializing vector store...")
-        vectorstore = init_vectorstore(config, documents, qdrant_client)
+        vectorstore = await init_vectorstore(config, documents, qdrant_client)
         
         # Initialize LLM
         logger.info("Initializing language model...")
@@ -1619,10 +1801,98 @@ async def get_user_chats(user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Global progress storage for tracking upload progress
+upload_progress_store = {}
+
 @app.post("/v1/documents/upload", response_model=DocumentUploadResponse)
 async def upload_document(file: UploadFile = File(...)):
+    """Ҳужжат юклаш ва векторлаштириш (progress trackingsiz)"""
+    return await _upload_document_internal(file, None)
+
+@app.post("/v1/documents/upload-with-progress")
+async def upload_document_with_progress(file: UploadFile = File(...)):
+    """Ҳужжат юклаш ва векторлаштириш (progress tracking bilan)"""
+    # Generate unique upload ID
+    upload_id = str(uuid.uuid4())
+    
+    # Initialize progress
+    upload_progress_store[upload_id] = {
+        "stage": "starting",
+        "progress": 0,
+        "message": "Starting upload process...",
+        "filename": file.filename
+    }
+    
+    # Start upload in background
+    asyncio.create_task(_upload_with_progress_task(file, upload_id))
+    
+    return {"upload_id": upload_id, "message": "Upload started, use /v1/documents/upload-progress/{upload_id} for progress"}
+
+@app.get("/v1/documents/upload-progress/{upload_id}")
+async def get_upload_progress(upload_id: str):
+    """Get upload progress using Server-Sent Events"""
+    
+    async def generate_progress():
+        while upload_id in upload_progress_store:
+            progress_data = upload_progress_store[upload_id]
+            yield f"data: {json.dumps(progress_data)}\n\n"
+            
+            # If completed or failed, send final message and exit
+            if progress_data.get("progress", 0) >= 100 or progress_data.get("stage") in ["completed", "failed"]:
+                # Clean up after 5 seconds
+                await asyncio.sleep(5)
+                if upload_id in upload_progress_store:
+                    del upload_progress_store[upload_id]
+                break
+                
+            await asyncio.sleep(0.5)  # Update every 500ms
+    
+    return StreamingResponse(
+        generate_progress(),
+        media_type="text/plain",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Content-Type": "text/event-stream"
+        }
+    )
+
+async def _upload_with_progress_task(file: UploadFile, upload_id: str):
+    """Background task for upload with progress"""
+    try:
+        async def progress_callback(stage: str, progress: float, message: str):
+            upload_progress_store[upload_id] = {
+                "stage": stage,
+                "progress": min(progress, 100),
+                "message": message,
+                "filename": file.filename
+            }
+        
+        result = await _upload_document_internal(file, progress_callback)
+        
+        # Final success message
+        upload_progress_store[upload_id] = {
+            "stage": "completed",
+            "progress": 100,
+            "message": f"Upload completed successfully! {result.chunks_added} chunks processed.",
+            "filename": file.filename,
+            "result": result.dict()
+        }
+        
+    except Exception as e:
+        # Final error message
+        upload_progress_store[upload_id] = {
+            "stage": "failed",
+            "progress": 0,
+            "message": f"Upload failed: {str(e)}",
+            "filename": file.filename,
+            "error": str(e)
+        }
+
+async def _upload_document_internal(file: UploadFile, progress_callback=None):
     """Ҳужжат юклаш ва векторлаштириш"""
     start_time = time.time()
+    file_size = 0  # Initialize file_size early to avoid NameError
     
     try:
         if not vectorstore or not qdrant_client:
@@ -1633,12 +1903,18 @@ async def upload_document(file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail="No file provided")
         
         # Check file size (limit to 50MB)
-        file_size = 0
         content = await file.read()
         file_size = len(content)
         
         if file_size > 50 * 1024 * 1024:  # 50MB limit
             raise HTTPException(status_code=400, detail="File too large. Maximum size is 50MB")
+        
+        # Warn about large files that might cause timeouts
+        if file_size > 5 * 1024 * 1024:  # 5MB warning
+            logger.warning(f"⚠️ Large file detected ({file_size / (1024*1024):.1f}MB). Processing may take 2-5 minutes.")
+        
+        if progress_callback:
+            await progress_callback("validation", 5, f"File validated ({file_size / (1024*1024):.1f}MB)")
         
         # Reset file pointer
         await file.seek(0)
@@ -1646,11 +1922,28 @@ async def upload_document(file: UploadFile = File(...)):
         # Get config
         config = load_config()
         
+        if progress_callback:
+            await progress_callback("processing", 10, "Processing document content...")
+        
         # Process the uploaded document
         split_docs, process_message = await process_uploaded_document(file, config)
         
+        if progress_callback:
+            await progress_callback("processed", 25, f"Document processed: {len(split_docs)} chunks created")
+        
+        # Debug: Log what we're about to add
+        logger.info(f"🔍 About to add {len(split_docs)} documents to vector store")
+        for i, doc in enumerate(split_docs[:3]):  # Log first 3 documents
+            logger.info(f"📄 Document {i+1}: {len(doc.page_content)} chars, metadata: {doc.metadata}")
+        
         # Add documents to vector store
-        vectorstore.add_documents(split_docs)
+        if progress_callback:
+            await progress_callback("embedding", 30, "Starting vectorization process...")
+        
+        await vectorstore.add_documents(split_docs, progress_callback=progress_callback)
+        
+        if progress_callback:
+            await progress_callback("vectorized", 80, "Vectorization completed, saving file...")
         
         # Save file to documents directory
         documents_path = Path(config["documents_path"])
@@ -1664,11 +1957,24 @@ async def upload_document(file: UploadFile = File(...)):
         
         processing_time = time.time() - start_time
         
+        if progress_callback:
+            await progress_callback("saving", 90, "Saving file to storage...")
+        
         logger.info(f"Successfully uploaded and processed document: {file.filename}")
+        
+        # Calculate performance metrics
+        chunks_per_second = len(split_docs) / max(processing_time, 0.1)
+        mb_per_second = (file_size / (1024*1024)) / max(processing_time, 0.1)
+        
+        performance_msg = f"⚡ Performance: {chunks_per_second:.1f} chunks/sec, {mb_per_second:.2f} MB/sec"
+        logger.info(performance_msg)
+        
+        if progress_callback:
+            await progress_callback("completed", 100, f"Upload completed! {performance_msg}")
         
         return DocumentUploadResponse(
             success=True,
-            message=f"Document successfully uploaded and vectorized. {process_message}",
+            message=f"Document successfully uploaded and vectorized. {process_message} {performance_msg}",
             filename=file.filename,
             file_size=file_size,
             chunks_added=len(split_docs),
@@ -1770,23 +2076,15 @@ async def delete_document(request: DocumentDeleteRequest):
         if not str(file_path.resolve()).startswith(str(documents_path.resolve())):
             raise HTTPException(status_code=403, detail="Access denied")
         
-        # Delete embeddings from vector store first
+        # Delete embeddings from vector store first using enhanced deletion
         embeddings_deleted = 0
         try:
-            # Try different source identifiers to find the embeddings
-            source_identifiers = [
-                request.filename,  # Direct filename
-                f"uploaded_{request.filename}",  # With uploaded prefix
-            ]
-            
-            for source_id in source_identifiers:
-                deleted_count = vectorstore.delete_documents_by_source(source_id)
-                embeddings_deleted += deleted_count
-                if deleted_count > 0:
-                    logger.info(f"Deleted {deleted_count} embeddings for source: {source_id}")
+            # Use the enhanced vector deletion method
+            embeddings_deleted = vectorstore.delete_documents_by_source(request.filename)
+            logger.info(f"🗑️ Enhanced vector deletion completed: {embeddings_deleted} embeddings removed")
             
         except Exception as e:
-            logger.warning(f"Failed to delete embeddings for {request.filename}: {e}")
+            logger.warning(f"⚠️ Vector deletion failed for {request.filename}: {e}")
             # Continue with file deletion even if embeddings deletion fails
         
         # Delete the file from filesystem
@@ -1819,6 +2117,9 @@ async def delete_document(request: DocumentDeleteRequest):
         )
 
 
+
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
     """Global exception handler"""
@@ -1839,5 +2140,7 @@ if __name__ == "__main__":
         "app_postgres:app",
         host=config["host"],
         port=config["port"],
-        reload=False
+        reload=False,
+        timeout_keep_alive=300,  # Keep connections alive for 5 minutes
+        timeout_graceful_shutdown=30  # Allow 30 seconds for graceful shutdown
     ) 

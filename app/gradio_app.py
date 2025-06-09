@@ -237,6 +237,8 @@ class GradioRAGClient:
         except Exception as e:
             return {"success": False, "error": f"Хато: {str(e)}"}
 
+
+
 # Global client instance
 client = GradioRAGClient()
 
@@ -672,6 +674,9 @@ def delete_document_handler(filename: str) -> str:
     except Exception as e:
         return f"❌ Хато: {str(e)}"
 
+
+
+
 # Create Gradio interface
 with gr.Blocks(title="Platform Assistant RAG Chatbot", theme=gr.themes.Soft()) as demo:
     gr.Markdown("""
@@ -820,6 +825,8 @@ with gr.Blocks(title="Platform Assistant RAG Chatbot", theme=gr.themes.Soft()) a
                     """)
             
             delete_output = gr.Markdown(label="Ўчириш натижаси")
+        
+
     
     # Event handlers
     def send_message_handler(message, history, user_id, chat_id):
@@ -883,6 +890,8 @@ with gr.Blocks(title="Platform Assistant RAG Chatbot", theme=gr.themes.Soft()) a
         inputs=[filename_input],
         outputs=delete_output
     )
+    
+
 
 if __name__ == "__main__":
     print("🚀 Gradio интерфейсини ишга тушириш...")

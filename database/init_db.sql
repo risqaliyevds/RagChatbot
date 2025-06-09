@@ -35,6 +35,19 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     FOREIGN KEY (chat_id) REFERENCES chat_sessions(chat_id) ON DELETE CASCADE
 );
 
+-- Create vector points table for tracking Qdrant point IDs
+CREATE TABLE IF NOT EXISTS vector_points (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    filename VARCHAR(500) NOT NULL,
+    qdrant_point_id BIGINT NOT NULL,
+    file_size_bytes BIGINT DEFAULT 0,
+    chunk_index INTEGER DEFAULT 0,
+    chunk_content_preview TEXT,
+    collection_name VARCHAR(255) DEFAULT 'rag_documents',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    metadata JSONB DEFAULT '{}'::jsonb
+);
+
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_chat_id ON chat_sessions(chat_id);
@@ -43,6 +56,10 @@ CREATE INDEX IF NOT EXISTS idx_chat_sessions_last_activity ON chat_sessions(last
 CREATE INDEX IF NOT EXISTS idx_chat_messages_chat_id ON chat_messages(chat_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_timestamp ON chat_messages(timestamp);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_role ON chat_messages(role);
+CREATE INDEX IF NOT EXISTS idx_vector_points_filename ON vector_points(filename);
+CREATE INDEX IF NOT EXISTS idx_vector_points_qdrant_id ON vector_points(qdrant_point_id);
+CREATE INDEX IF NOT EXISTS idx_vector_points_collection ON vector_points(collection_name);
+CREATE INDEX IF NOT EXISTS idx_vector_points_created_at ON vector_points(created_at);
 
 -- Create function to update last_activity automatically
 CREATE OR REPLACE FUNCTION update_last_activity()

@@ -83,6 +83,12 @@ services:
       - HOST=0.0.0.0
       - PORT=8081
     volumes:
+      # Mount source code for live development (no rebuild needed)
+      - ./app_postgres.py:/app/app_postgres.py
+      - ./database:/app/database
+      - ./app:/app/app
+      - ./config.env:/app/config.env
+      - ./startup.sh:/app/startup.sh
       # Mount host documents folder directly for file uploads (read-write)
       - ./documents:/app/documents
       # Create backup mount point for startup script
@@ -112,6 +118,12 @@ services:
       # Ensure Gradio uses the same documents path
       - DOCUMENTS_PATH=/app/documents
     volumes:
+      # Mount source code for live development (no rebuild needed)
+      - ./app_postgres.py:/app/app_postgres.py
+      - ./database:/app/database
+      - ./app:/app/app
+      - ./config.env:/app/config.env
+      - ./startup.sh:/app/startup.sh
       # Mount host documents folder directly (same as main app)
       - ./documents:/app/documents
       # Create backup mount point for startup script

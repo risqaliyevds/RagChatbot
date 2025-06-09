@@ -1,6 +1,6 @@
 # 🤖 Advanced RAG Chatbot Platform
 
-A sophisticated Retrieval-Augmented Generation (RAG) chatbot platform built with FastAPI, featuring intelligent document processing, user management, chat history tracking, and multi-language support. This platform provides both API endpoints and a user-friendly Gradio interface for seamless interaction.
+A sophisticated Retrieval-Augmented Generation (RAG) chatbot platform built with FastAPI and PostgreSQL, featuring intelligent document processing, persistent user management, chat history tracking, and multi-language support. This platform provides both API endpoints and a user-friendly Gradio interface for seamless interaction.
 
 ## ✨ Key Features
 
@@ -11,10 +11,11 @@ A sophisticated Retrieval-Augmented Generation (RAG) chatbot platform built with
 - **Context-Aware Responses**: Leverages chat history for coherent conversations
 
 ### 👥 User Management & Chat History
-- **Unique User Identification**: Individual user sessions with persistent storage
-- **Chat Session Management**: Multiple concurrent chats per user
+- **PostgreSQL Database**: Persistent storage for all user data and chat history
+- **Unique User Identification**: Individual user sessions with database persistence
+- **Chat Session Management**: Multiple concurrent chats per user with full history
 - **Automatic Cleanup**: Expired sessions removed after 1 hour of inactivity
-- **Conversation Context**: Maintains context across chat interactions
+- **Conversation Context**: Maintains context across chat interactions with database reliability
 
 ### 🔧 Flexible Configuration
 - **Multiple Deployment Options**: Local file storage or Docker-based Qdrant
@@ -31,14 +32,16 @@ A sophisticated Retrieval-Augmented Generation (RAG) chatbot platform built with
 
 ### Prerequisites
 - Python 3.8+
-- Docker (optional, for Qdrant)
+- PostgreSQL database (configured via Docker Compose)
+- Docker (for Qdrant and PostgreSQL)
 - vLLM server running (for model inference)
 
 ### Installation
 
 1. **Clone and Setup Environment**
    ```bash
-   cd /mnt/mata/chatbot
+   git clone <repository-url>
+   cd chatbot
    python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    pip install -r requirements.txt
@@ -67,20 +70,24 @@ A sophisticated Retrieval-Augmented Generation (RAG) chatbot platform built with
    QDRANT_DISTANCE=COSINE
    ```
 
-3. **Start Qdrant (Docker Method)**
+3. **Start Services (Docker Method)**
    ```bash
+   # Start PostgreSQL, Qdrant, and all required services
    docker-compose up -d
    ```
    
-   Or use local file storage by commenting out `QDRANT_URL` in config.env
+   This will start:
+   - PostgreSQL database for chat history and user management
+   - Qdrant vector database for document embeddings
+   - All necessary services with persistent data volumes
 
 4. **Launch the Application**
    ```bash
-   # Start the main RAG server
-   python app.py
+   # Start the main RAG server (FastAPI with PostgreSQL)
+   python app_postgres.py
    
    # In another terminal, start the Gradio interface (optional)
-   python gradio_app.py
+   python app/gradio_app.py
    ```
 
 ## 📡 API Reference
@@ -162,9 +169,9 @@ The included Gradio interface provides an intuitive way to interact with the cha
 - **User-friendly Design**: Clean, responsive interface
 
 ### Access
-- **Main Interface**: http://localhost:7860
-- **API Server**: http://localhost:8080
-- **Qdrant UI**: http://localhost:3000 (when using Docker)
+- **Gradio Interface**: http://localhost:7860
+- **FastAPI Server**: http://localhost:8081
+- **Qdrant UI**: http://localhost:6333 (when using Docker)
 
 ## 🔧 Advanced Configuration
 
@@ -206,17 +213,37 @@ CHAT_MODEL=google/gemma-3-12b-it
 
 ```
 chatbot/
-├── app.py                    # Main FastAPI application
-├── gradio_app.py            # Gradio web interface
-├── config.env               # Configuration file
-├── requirements.txt         # Python dependencies
-├── docker-compose.yml       # Docker services
-├── start.sh                 # Startup script
-├── fix_permissions.sh       # Permission fix utility
-├── documents/               # Document storage directory
-├── qdrant_storage/          # Local Qdrant data (if using local storage)
-├── chat_history.json        # Chat history storage (auto-generated)
-└── README.md               # This file
+├── app_postgres.py          # Main FastAPI application with PostgreSQL
+├── app/                     # Application components
+│   └── gradio_app.py       # Gradio web interface
+├── database/                # Database components
+│   ├── __init__.py         # Database package init
+│   ├── database.py         # Database manager with PostgreSQL
+│   └── init_db.sql         # Database initialization script
+├── docs/                    # Documentation
+│   ├── STRUCTURE.md        # Project structure details
+│   ├── DEPLOYMENT_SUMMARY.md # Deployment guide
+│   ├── DOCKER_DEPLOYMENT.md  # Docker deployment guide
+│   └── QDRANT_CONFIG_README.md # Qdrant configuration
+├── scripts/                 # Deployment and utility scripts
+│   ├── deploy.sh           # Main deployment script
+│   ├── restart_app.sh      # Application restart utility
+│   └── k8s-deployment.yaml # Kubernetes deployment config
+├── tests/                   # Test files
+│   ├── test_progress_document.md # Progress bar test document
+│   └── test_volume_persistence.sh # Docker volume test script
+├── config.env              # Configuration file
+├── requirements.txt        # Python dependencies
+├── docker-compose.yml      # Docker services composition
+├── startup.sh              # Application startup script
+├── Dockerfile              # Docker build configuration
+├── documents/              # Document storage directory
+├── data/                   # Runtime data (excluded from git)
+│   ├── postgres_data/      # PostgreSQL data
+│   ├── qdrant_storage/     # Qdrant vector storage
+│   └── app_data/          # Application runtime data
+├── logs/                   # Application logs (runtime)
+└── README.md              # This documentation
 ```
 
 ## 🛠️ Development & Deployment
@@ -227,17 +254,17 @@ chatbot/
 pip install -r requirements.txt
 
 # Run with auto-reload
-uvicorn app:app --reload --host 0.0.0.0 --port 8080
+uvicorn app_postgres:app --reload --host 0.0.0.0 --port 8081
 ```
 
 ### Production Deployment
 ```bash
 # Use the provided startup script
-chmod +x start.sh
-./start.sh
+chmod +x startup.sh
+./startup.sh
 
 # Or run directly
-python app.py
+python app_postgres.py
 ```
 
 ### Docker Deployment
@@ -291,14 +318,14 @@ Simply place supported files in the `documents/` directory and restart the appli
 
 ### Health Checks
 ```bash
-# Check API health
-curl http://localhost:8080/health
+# Check FastAPI application health
+curl http://localhost:8081/health
 
 # Check Qdrant status
 curl http://localhost:6333/health
 
 # View collections
-curl http://localhost:8080/v1/collections
+curl http://localhost:8081/v1/collections
 ```
 
 ## 🤝 Contributing
@@ -425,6 +452,32 @@ The implementation follows the **minimal change philosophy**:
 5. **Delete files**: Use the deletion tab to remove unwanted documents
 
 All uploaded files are automatically processed and embedded for use in the RAG (Retrieval-Augmented Generation) system.
+
+## 🧪 Testing
+
+The project includes comprehensive test files in the `tests/` directory:
+
+### Test Files
+- **`test_volume_persistence.sh`**: Docker volume persistence testing script
+  - Tests document storage across container restarts
+  - Validates API endpoints for file upload/download
+  - Ensures data persistence with Docker volumes
+  
+- **`test_progress_document.md`**: Large test document for progress bar testing
+  - Demonstrates file upload progress tracking
+  - Tests document processing pipeline
+  - Used for embedding generation performance testing
+
+### Running Tests
+```bash
+# Test Docker volume persistence
+cd tests/
+chmod +x test_volume_persistence.sh
+./test_volume_persistence.sh
+
+# Test file upload with progress tracking using the test document
+# Use the Gradio interface and upload test_progress_document.md
+```
 
 ## 🧹 **Embedding Deletion System**
 

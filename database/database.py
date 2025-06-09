@@ -419,6 +419,116 @@ class DatabaseManager:
             logger.error(f"Failed to migrate from JSON: {e}")
             return False
     
+    def store_vector_points(self, filename: str, point_ids: List[int], file_size: int = 0, 
+                           collection_name: str = "rag_documents", chunks_data: List[Dict] = None) -> bool:
+        """Store vector point IDs for a file"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    for i, point_id in enumerate(point_ids):
+                        chunk_preview = ""
+                        if chunks_data and i < len(chunks_data):
+                            chunk_preview = chunks_data[i].get("content", "")[:200]  # First 200 chars
+                        
+                        cur.execute(
+                            """
+                            INSERT INTO vector_points 
+                            (filename, qdrant_point_id, file_size_bytes, chunk_index, chunk_content_preview, collection_name)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                            """,
+                            (filename, point_id, file_size, i, chunk_preview, collection_name)
+                        )
+                    conn.commit()
+                    logger.info(f"✅ Stored {len(point_ids)} vector point IDs for file: {filename}")
+                    return True
+                    
+        except Exception as e:
+            logger.error(f"❌ Failed to store vector points: {e}")
+            return False
+    
+    def get_vector_points_for_file(self, filename: str, collection_name: str = "rag_documents") -> List[int]:
+        """Get all vector point IDs for a specific file"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT qdrant_point_id FROM vector_points 
+                        WHERE filename = %s AND collection_name = %s
+                        ORDER BY chunk_index
+                        """,
+                        (filename, collection_name)
+                    )
+                    results = cur.fetchall()
+                    point_ids = [row[0] for row in results]
+                    logger.info(f"🔍 Found {len(point_ids)} vector points for file: {filename}")
+                    return point_ids
+                    
+        except Exception as e:
+            logger.error(f"❌ Failed to get vector points for file: {e}")
+            return []
+    
+    def delete_vector_points_for_file(self, filename: str, collection_name: str = "rag_documents") -> int:
+        """Delete vector point tracking records for a file"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        DELETE FROM vector_points 
+                        WHERE filename = %s AND collection_name = %s
+                        """,
+                        (filename, collection_name)
+                    )
+                    deleted_count = cur.rowcount
+                    conn.commit()
+                    logger.info(f"🗑️ Deleted {deleted_count} vector point records for file: {filename}")
+                    return deleted_count
+                    
+        except Exception as e:
+            logger.error(f"❌ Failed to delete vector points for file: {e}")
+            return 0
+    
+    def get_file_vector_stats(self, filename: str = None) -> Dict[str, Any]:
+        """Get statistics about vector points"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    if filename:
+                        # Stats for specific file
+                        cur.execute(
+                            """
+                            SELECT 
+                                COUNT(*) as total_points,
+                                MAX(file_size_bytes) as file_size,
+                                MIN(created_at) as first_created,
+                                MAX(created_at) as last_created
+                            FROM vector_points 
+                            WHERE filename = %s
+                            """,
+                            (filename,)
+                        )
+                    else:
+                        # Overall stats
+                        cur.execute(
+                            """
+                            SELECT 
+                                COUNT(*) as total_points,
+                                COUNT(DISTINCT filename) as total_files,
+                                SUM(file_size_bytes) as total_size,
+                                MIN(created_at) as first_created,
+                                MAX(created_at) as last_created
+                            FROM vector_points
+                            """
+                        )
+                    
+                    result = cur.fetchone()
+                    return dict(result) if result else {}
+                    
+        except Exception as e:
+            logger.error(f"❌ Failed to get vector stats: {e}")
+            return {}
+    
     def close(self):
         """Close database connection pool"""
         if hasattr(self, 'pool') and self.pool:
