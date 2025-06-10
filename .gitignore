@@ -52,6 +52,7 @@ data/postgres_data/
 data/qdrant_storage/
 data/app_data/
 qdrant_storage/
+docker_images/
 
 # Temporary files
 *.tmp
