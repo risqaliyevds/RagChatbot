@@ -35,6 +35,9 @@ app.log
 app_new.log
 gradio.log
 
+# Gradio
+.gradio/
+
 # Database
 *.db
 *.sqlite3
@@ -157,4 +160,14 @@ Desktop.ini
 
 # Test files (keep in tests/ directory)
 test_*.md
-test_*.sh 
+test_*.sh
+test_document.txt
+
+# IDE and editor specific files
+.cursorignore
+.vscode/
+.idea/
+
+# Backup files
+*.backup
+.env.backup 

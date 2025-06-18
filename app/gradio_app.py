@@ -7,6 +7,8 @@ Simple Gradio interface to test the enhanced RAG chatbot with:
 - User management
 - Chat history tracking
 - Platform functionality assistance
+
+This is the main Gradio interface moved from the root app folder.
 """
 
 import gradio as gr
@@ -48,23 +50,29 @@ class GradioRAGClient:
         """Хабар юбориш"""
         try:
             payload = {
-                "user_id": user_id or  self.current_user_id,
+                "user_id": user_id or self.current_user_id,
                 "message": message
             }
             
             if chat_id:
                 payload["chat_id"] = chat_id
+            
+            print(f"🔧 DEBUG: Sending message to {self.base_url}/v1/chat")
+            print(f"🔧 DEBUG: Payload: {payload}")
                 
             response = requests.post(
                 f"{self.base_url}/v1/chat",
                 json=payload,
                 headers={"Content-Type": "application/json"},
-                timeout=30
+                timeout=60  # Increased timeout
             )
+            
+            print(f"🔧 DEBUG: Response status: {response.status_code}")
             
             if response.status_code == 200:
                 data = response.json()
                 self.current_chat_id = data.get("chat_id")
+                print(f"🔧 DEBUG: Success response: {data}")
                 return {
                     "success": True,
                     "response": data.get("message", ""),
@@ -72,15 +80,33 @@ class GradioRAGClient:
                     "timestamp": data.get("timestamp", "")
                 }
             else:
+                error_text = response.text[:500]  # Limit error text
+                print(f"🔧 DEBUG: Error response: {error_text}")
                 return {
                     "success": False,
-                    "error": f"HTTP {response.status_code}: {response.text}"
+                    "error": f"HTTP {response.status_code}: {error_text}"
                 }
                 
-        except Exception as e:
+        except requests.exceptions.ConnectionError as e:
+            error_msg = f"Серверга уланиш хатоси: {str(e)}"
+            print(f"🔧 DEBUG: Connection error: {error_msg}")
             return {
                 "success": False,
-                "error": f"Хато: {str(e)}"
+                "error": error_msg
+            }
+        except requests.exceptions.Timeout as e:
+            error_msg = f"Вақт тугашу хатоси: {str(e)}"
+            print(f"🔧 DEBUG: Timeout error: {error_msg}")
+            return {
+                "success": False,
+                "error": error_msg
+            }
+        except Exception as e:
+            error_msg = f"Умумий хато: {str(e)}"
+            print(f"🔧 DEBUG: General error: {error_msg}")
+            return {
+                "success": False,
+                "error": error_msg
             }
     
     def get_chat_history(self, chat_id: str, user_id: str = None) -> dict:
@@ -184,20 +210,26 @@ class GradioRAGClient:
     def upload_document(self, file_path: str) -> dict:
         """Ҳужжат юклаш"""
         try:
+            # Read the file content first to avoid file handle issues
             with open(file_path, 'rb') as f:
-                files = {'file': (os.path.basename(file_path), f, 'application/octet-stream')}
+                file_content = f.read()
+            
+            # Now upload with the file content
+            files = {
+                'file': (os.path.basename(file_path), file_content, 'application/octet-stream')
+            }
+            
+            response = requests.post(
+                f"{self.base_url}/v1/documents/upload-with-progress",
+                files=files,
+                timeout=60  # Longer timeout for file upload
+            )
+            
+            if response.status_code == 200:
+                return {"success": True, "data": response.json()}
+            else:
+                return {"success": False, "error": f"HTTP {response.status_code}: {response.text}"}
                 
-                response = requests.post(
-                    f"{self.base_url}/v1/documents/upload",
-                    files=files,
-                    timeout=60  # Longer timeout for file upload
-                )
-                
-                if response.status_code == 200:
-                    return {"success": True, "data": response.json()}
-                else:
-                    return {"success": False, "error": f"HTTP {response.status_code}: {response.text}"}
-                    
         except Exception as e:
             return {"success": False, "error": f"Хато: {str(e)}"}
 
@@ -241,6 +273,20 @@ class GradioRAGClient:
 
 # Global client instance
 client = GradioRAGClient()
+
+# Test connection on startup
+def test_connection():
+    """Test initial connection to the API"""
+    print("🔍 Testing connection to API...")
+    health = client.check_health()
+    if "✅" in health.get("status", ""):
+        print("✅ Connection to API successful!")
+    else:
+        print(f"❌ Connection to API failed: {health}")
+    return health
+
+# Test connection immediately
+startup_health = test_connection()
 
 def format_chat_history(messages: List[dict]) -> str:
     """Чат тарихини форматлаш"""
@@ -901,6 +947,7 @@ if __name__ == "__main__":
     demo.launch(
         server_name="0.0.0.0",
         server_port=7860,
-        share=True,
-        show_error=True
+        share=False,
+        show_error=True,
+        debug=False
     ) 

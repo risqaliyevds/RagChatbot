@@ -23,17 +23,31 @@ logger = logging.getLogger(__name__)
 class DatabaseManager:
     """PostgreSQL database manager for chat operations"""
     
-    def __init__(self, database_url: str = None, min_connections: int = 1, max_connections: int = 10):
+    def __init__(self, database_url: str = None, min_connections: int = None, max_connections: int = None):
         """Initialize database manager with connection pool"""
-        self.database_url = database_url or os.getenv("DATABASE_URL", 
-            "postgresql://chatbot_user:chatbot_password@localhost:5432/chatbot_db")
+        # Build database URL from environment variables if not provided
+        if not database_url:
+            postgres_host = os.getenv("POSTGRES_HOST", "localhost")
+            postgres_port = os.getenv("POSTGRES_PORT", "5432")
+            postgres_db = os.getenv("POSTGRES_DB", "chatbot_db")
+            postgres_user = os.getenv("POSTGRES_USER", "chatbot_user")
+            postgres_password = os.getenv("POSTGRES_PASSWORD", "chatbot_password")
+            database_url = f"postgresql://{postgres_user}:{postgres_password}@{postgres_host}:{postgres_port}/{postgres_db}"
+        
+        self.database_url = database_url
+        
+        # Use new config fields for pool settings if available
+        if min_connections is None:
+            min_connections = int(os.getenv("POSTGRES_POOL_SIZE", "10")) // 2  # Half for min
+        if max_connections is None:
+            max_connections = int(os.getenv("POSTGRES_POOL_SIZE", "10")) + int(os.getenv("POSTGRES_MAX_OVERFLOW", "20"))
         
         try:
             # Create connection pool
             self.pool = SimpleConnectionPool(
                 min_connections, max_connections, self.database_url
             )
-            logger.info("Database connection pool created successfully")
+            logger.info(f"Database connection pool created successfully (min: {min_connections}, max: {max_connections})")
             
             # Test connection
             with self.get_connection() as conn:
@@ -325,34 +339,8 @@ class DatabaseManager:
 
     def create_new_chat_for_user(self, user_id: str) -> Optional[str]:
         """Create a new chat session for user (for New Chat button functionality)"""
-        try:
-            # Ensure user exists
-            self.ensure_user_exists(user_id)
-            
-            # Generate new chat ID
-            new_chat_id = f"chat_{uuid.uuid4().hex[:8]}"
-            
-            with self.get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        INSERT INTO chat_sessions (chat_id, user_id) 
-                        VALUES (%s, %s) 
-                        RETURNING chat_id
-                        """,
-                        (new_chat_id, user_id)
-                    )
-                    result = cur.fetchone()
-                    conn.commit()
-                    
-                    if result:
-                        logger.info(f"Created new chat session: {new_chat_id} for user: {user_id}")
-                        return result[0]
-                    return None
-                        
-        except Exception as e:
-            logger.error(f"Failed to create new chat for user: {e}")
-            return None
+        # This is now just a wrapper around create_chat_session
+        return self.create_chat_session(user_id)
 
     def get_user_last_activity(self, user_id: str) -> Optional[datetime]:
         """Get user's last activity timestamp"""
@@ -419,9 +407,33 @@ class DatabaseManager:
             logger.error(f"Failed to migrate from JSON: {e}")
             return False
     
-    def store_vector_points(self, filename: str, point_ids: List[int], file_size: int = 0, 
+    def create_document_record(self, filename: str, original_filename: str, file_size: int = 0, 
+                              file_type: str = None, metadata: Dict[str, Any] = None) -> Optional[str]:
+        """Create a document record and return document ID"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO documents 
+                        (filename, original_filename, file_size_bytes, file_type, metadata)
+                        VALUES (%s, %s, %s, %s, %s)
+                        RETURNING id
+                        """,
+                        (filename, original_filename, file_size, file_type, json.dumps(metadata or {}))
+                    )
+                    document_id = cur.fetchone()[0]
+                    conn.commit()
+                    logger.info(f"✅ Created document record: {filename} (ID: {document_id})")
+                    return str(document_id)
+                    
+        except Exception as e:
+            logger.error(f"❌ Failed to create document record: {e}")
+            return None
+
+    def store_vector_points(self, document_id: str, filename: str, point_ids: List[int], 
                            collection_name: str = "rag_documents", chunks_data: List[Dict] = None) -> bool:
-        """Store vector point IDs for a file"""
+        """Store vector point IDs for a document"""
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
@@ -433,13 +445,24 @@ class DatabaseManager:
                         cur.execute(
                             """
                             INSERT INTO vector_points 
-                            (filename, qdrant_point_id, file_size_bytes, chunk_index, chunk_content_preview, collection_name)
+                            (document_id, filename, qdrant_point_id, chunk_index, chunk_content_preview, collection_name)
                             VALUES (%s, %s, %s, %s, %s, %s)
                             """,
-                            (filename, point_id, file_size, i, chunk_preview, collection_name)
+                            (document_id, filename, point_id, i, chunk_preview, collection_name)
                         )
+                    
+                    # Update document with chunks count and status
+                    cur.execute(
+                        """
+                        UPDATE documents 
+                        SET chunks_count = %s, processing_status = 'completed'
+                        WHERE id = %s
+                        """,
+                        (len(point_ids), document_id)
+                    )
+                    
                     conn.commit()
-                    logger.info(f"✅ Stored {len(point_ids)} vector point IDs for file: {filename}")
+                    logger.info(f"✅ Stored {len(point_ids)} vector point IDs for document: {filename}")
                     return True
                     
         except Exception as e:
@@ -468,8 +491,59 @@ class DatabaseManager:
             logger.error(f"❌ Failed to get vector points for file: {e}")
             return []
     
+    def deactivate_document(self, filename: str) -> bool:
+        """Deactivate a document (set is_active = False) and get vector points for deletion"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Update document status
+                    cur.execute(
+                        """
+                        UPDATE documents 
+                        SET is_active = FALSE, processing_status = 'deleted'
+                        WHERE filename = %s AND is_active = TRUE
+                        """,
+                        (filename,)
+                    )
+                    
+                    if cur.rowcount > 0:
+                        conn.commit()
+                        logger.info(f"✅ Deactivated document: {filename}")
+                        return True
+                    else:
+                        logger.warning(f"⚠️ Document not found or already inactive: {filename}")
+                        return False
+                        
+        except Exception as e:
+            logger.error(f"❌ Failed to deactivate document: {e}")
+            return False
+
+    def get_vector_points_for_document(self, filename: str, collection_name: str = "rag_documents") -> List[int]:
+        """Get all vector point IDs for a document (only active documents)"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT vp.qdrant_point_id 
+                        FROM vector_points vp
+                        JOIN documents d ON vp.document_id = d.id
+                        WHERE vp.filename = %s AND vp.collection_name = %s AND d.is_active = TRUE
+                        ORDER BY vp.chunk_index
+                        """,
+                        (filename, collection_name)
+                    )
+                    results = cur.fetchall()
+                    point_ids = [row[0] for row in results]
+                    logger.info(f"🔍 Found {len(point_ids)} vector points for active document: {filename}")
+                    return point_ids
+                    
+        except Exception as e:
+            logger.error(f"❌ Failed to get vector points for document: {e}")
+            return []
+
     def delete_vector_points_for_file(self, filename: str, collection_name: str = "rag_documents") -> int:
-        """Delete vector point tracking records for a file"""
+        """Delete vector point tracking records for a file (legacy method)"""
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
@@ -489,8 +563,68 @@ class DatabaseManager:
             logger.error(f"❌ Failed to delete vector points for file: {e}")
             return 0
     
+    def get_documents_list(self, active_only: bool = True) -> List[Dict[str, Any]]:
+        """Get list of documents with metadata"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    query = """
+                        SELECT 
+                            id,
+                            filename,
+                            original_filename,
+                            file_size_bytes,
+                            file_type,
+                            upload_timestamp,
+                            is_active,
+                            chunks_count,
+                            processing_status,
+                            error_message,
+                            metadata
+                        FROM documents
+                    """
+                    
+                    if active_only:
+                        query += " WHERE is_active = TRUE"
+                    
+                    query += " ORDER BY upload_timestamp DESC"
+                    
+                    cur.execute(query)
+                    results = cur.fetchall()
+                    return [dict(row) for row in results]
+                    
+        except Exception as e:
+            logger.error(f"❌ Failed to get documents list: {e}")
+            return []
+
+    def get_document_stats(self) -> Dict[str, Any]:
+        """Get overall document statistics"""
+        try:
+            with self.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute(
+                        """
+                        SELECT 
+                            COUNT(*) as total_documents,
+                            COUNT(*) FILTER (WHERE is_active = TRUE) as active_documents,
+                            COUNT(*) FILTER (WHERE is_active = FALSE) as inactive_documents,
+                            SUM(file_size_bytes) as total_size,
+                            SUM(chunks_count) as total_chunks,
+                            MIN(upload_timestamp) as first_upload,
+                            MAX(upload_timestamp) as last_upload
+                        FROM documents
+                        """
+                    )
+                    
+                    result = cur.fetchone()
+                    return dict(result) if result else {}
+                    
+        except Exception as e:
+            logger.error(f"❌ Failed to get document stats: {e}")
+            return {}
+
     def get_file_vector_stats(self, filename: str = None) -> Dict[str, Any]:
-        """Get statistics about vector points"""
+        """Get statistics about vector points (legacy method)"""
         try:
             with self.get_connection() as conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -500,11 +634,11 @@ class DatabaseManager:
                             """
                             SELECT 
                                 COUNT(*) as total_points,
-                                MAX(file_size_bytes) as file_size,
-                                MIN(created_at) as first_created,
-                                MAX(created_at) as last_created
-                            FROM vector_points 
-                            WHERE filename = %s
+                                MIN(vp.created_at) as first_created,
+                                MAX(vp.created_at) as last_created
+                            FROM vector_points vp
+                            JOIN documents d ON vp.document_id = d.id
+                            WHERE vp.filename = %s AND d.is_active = TRUE
                             """,
                             (filename,)
                         )
@@ -514,11 +648,12 @@ class DatabaseManager:
                             """
                             SELECT 
                                 COUNT(*) as total_points,
-                                COUNT(DISTINCT filename) as total_files,
-                                SUM(file_size_bytes) as total_size,
-                                MIN(created_at) as first_created,
-                                MAX(created_at) as last_created
-                            FROM vector_points
+                                COUNT(DISTINCT vp.filename) as total_files,
+                                MIN(vp.created_at) as first_created,
+                                MAX(vp.created_at) as last_created
+                            FROM vector_points vp
+                            JOIN documents d ON vp.document_id = d.id
+                            WHERE d.is_active = TRUE
                             """
                         )
                     

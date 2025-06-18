@@ -1,10 +1,9 @@
+# Database Package
 """
-Database package for RAG Chatbot
-================================
-
-This package contains database-related modules and utilities.
+Database management package for the RAG chatbot system.
+Includes PostgreSQL database operations and initialization functionality.
 """
 
-from .database import DatabaseManager, get_db_manager, init_database
+from .postgresql_manager import DatabaseManager, get_db_manager, init_database
 
 __all__ = ['DatabaseManager', 'get_db_manager', 'init_database'] 

@@ -35,17 +35,33 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     FOREIGN KEY (chat_id) REFERENCES chat_sessions(chat_id) ON DELETE CASCADE
 );
 
--- Create vector points table for tracking Qdrant point IDs
+-- Create documents table for tracking uploaded documents
+CREATE TABLE IF NOT EXISTS documents (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    filename VARCHAR(500) NOT NULL UNIQUE,
+    original_filename VARCHAR(500) NOT NULL,
+    file_size_bytes BIGINT DEFAULT 0,
+    file_type VARCHAR(100),
+    upload_timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    is_active BOOLEAN DEFAULT TRUE,
+    chunks_count INTEGER DEFAULT 0,
+    processing_status VARCHAR(50) DEFAULT 'processing',
+    error_message TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb
+);
+
+-- Create vector points table for tracking Qdrant point IDs  
 CREATE TABLE IF NOT EXISTS vector_points (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    document_id UUID NOT NULL,
     filename VARCHAR(500) NOT NULL,
     qdrant_point_id BIGINT NOT NULL,
-    file_size_bytes BIGINT DEFAULT 0,
     chunk_index INTEGER DEFAULT 0,
     chunk_content_preview TEXT,
     collection_name VARCHAR(255) DEFAULT 'rag_documents',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    metadata JSONB DEFAULT '{}'::jsonb
+    metadata JSONB DEFAULT '{}'::jsonb,
+    FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
 );
 
 -- Create indexes for better performance
@@ -56,6 +72,14 @@ CREATE INDEX IF NOT EXISTS idx_chat_sessions_last_activity ON chat_sessions(last
 CREATE INDEX IF NOT EXISTS idx_chat_messages_chat_id ON chat_messages(chat_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_timestamp ON chat_messages(timestamp);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_role ON chat_messages(role);
+-- Document indexes
+CREATE INDEX IF NOT EXISTS idx_documents_filename ON documents(filename);
+CREATE INDEX IF NOT EXISTS idx_documents_is_active ON documents(is_active);
+CREATE INDEX IF NOT EXISTS idx_documents_upload_timestamp ON documents(upload_timestamp);
+CREATE INDEX IF NOT EXISTS idx_documents_processing_status ON documents(processing_status);
+
+-- Vector points indexes
+CREATE INDEX IF NOT EXISTS idx_vector_points_document_id ON vector_points(document_id);
 CREATE INDEX IF NOT EXISTS idx_vector_points_filename ON vector_points(filename);
 CREATE INDEX IF NOT EXISTS idx_vector_points_qdrant_id ON vector_points(qdrant_point_id);
 CREATE INDEX IF NOT EXISTS idx_vector_points_collection ON vector_points(collection_name);

@@ -1,511 +1,584 @@
-# 🤖 Advanced RAG Chatbot Platform
+# RAG Chatbot - Production Ready
 
-A sophisticated Retrieval-Augmented Generation (RAG) chatbot platform built with FastAPI and PostgreSQL, featuring intelligent document processing, persistent user management, chat history tracking, and multi-language support. This platform provides both API endpoints and a user-friendly Gradio interface for seamless interaction.
+A high-performance **Retrieval Augmented Generation (RAG)** chatbot system built with **FastAPI**, **PostgreSQL**, **Qdrant vector database**, and **Gradio interface**. Designed for enterprise deployment with Docker containerization and complete environment variable control.
 
-## ✨ Key Features
+## 🚀 Features
 
-### 🧠 Advanced RAG Capabilities
-- **Multi-format Document Processing**: PDF, DOCX, TXT, MD, PY files
-- **Intelligent Text Chunking**: Optimized document splitting for better retrieval
-- **Vector Search**: Powered by Qdrant vector database with configurable similarity metrics
-- **Context-Aware Responses**: Leverages chat history for coherent conversations
-
-### 👥 User Management & Chat History
-- **PostgreSQL Database**: Persistent storage for all user data and chat history
-- **Unique User Identification**: Individual user sessions with database persistence
-- **Chat Session Management**: Multiple concurrent chats per user with full history
-- **Automatic Cleanup**: Expired sessions removed after 1 hour of inactivity
-- **Conversation Context**: Maintains context across chat interactions with database reliability
-
-### 🔧 Flexible Configuration
-- **Multiple Deployment Options**: Local file storage or Docker-based Qdrant
-- **Configurable Vector Dimensions**: Auto-detection or manual configuration
-- **Model Flexibility**: Support for various embedding and chat models
-- **Environment-Based Configuration**: Easy setup through config files
-
-### 🌐 Multi-Interface Support
-- **RESTful API**: OpenAI-compatible chat completions endpoint
-- **Gradio Web Interface**: User-friendly testing and interaction interface
-- **Health Monitoring**: Built-in system health checks and diagnostics
-
-## 🚀 Quick Start Guide
-
-### Prerequisites
-- Python 3.8+
-- PostgreSQL database (configured via Docker Compose)
-- Docker (for Qdrant and PostgreSQL)
-- vLLM server running (for model inference)
-
-### Installation
-
-1. **Clone and Setup Environment**
-   ```bash
-   git clone <repository-url>
-   cd chatbot
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
-
-2. **Configure the Application**
-   
-   Edit `config.env` to match your setup:
-   ```env
-   # Model Configuration
-   EMBEDDING_MODEL=nomic-ai/nomic-embed-text-v1
-   CHAT_MODEL=google/gemma-3-12b-it
-   EMBEDDING_PORT=11445
-   CHAT_MODEL_PORT=11444
-   
-   # Document Processing
-   DOCUMENTS_PATH=/mnt/mata/chatbot/documents
-   CHUNK_SIZE=1000
-   CHUNK_OVERLAP=200
-   TOP_K=3
-   
-   # Qdrant Vector Database
-   QDRANT_URL=http://localhost:6333
-   QDRANT_COLLECTION_NAME=rag_documents
-   QDRANT_VECTOR_SIZE=0  # Auto-detect
-   QDRANT_DISTANCE=COSINE
-   ```
-
-3. **Start Services (Docker Method)**
-   ```bash
-   # Start PostgreSQL, Qdrant, and all required services
-   docker-compose up -d
-   ```
-   
-   This will start:
-   - PostgreSQL database for chat history and user management
-   - Qdrant vector database for document embeddings
-   - All necessary services with persistent data volumes
-
-4. **Launch the Application**
-   ```bash
-   # Start the main RAG server (FastAPI with PostgreSQL)
-   python app_postgres.py
-   
-   # In another terminal, start the Gradio interface (optional)
-   python app/gradio_app.py
-   ```
-
-## 📡 API Reference
-
-### Core Chat Endpoint
-
-**POST** `/v1/chat`
-
-Send a message and receive an intelligent response with context awareness.
-
-```json
-{
-  "user_id": "user_123",
-  "chat_id": "chat_abc123",  // Optional: leave empty for new chat
-  "message": "How do I access the map page?"
-}
-```
-
-**Response:**
-```json
-{
-  "chat_id": "chat_abc123",
-  "user_id": "user_123", 
-  "message": "To access the map page, you can...",
-  "timestamp": "2024-01-01T12:00:00"
-}
-```
-
-### OpenAI-Compatible Chat Completions
-
-**POST** `/v1/chat/completions`
-
-Standard OpenAI-compatible endpoint for integration with existing tools.
-
-```json
-{
-  "model": "google/gemma-3-12b-it",
-  "messages": [
-    {"role": "user", "content": "What is vLLM?"}
-  ],
-  "max_tokens": 150,
-  "temperature": 0.7
-}
-```
-
-### Chat History Management
-
-**POST** `/v1/chat/history`
-```json
-{
-  "user_id": "user_123",
-  "chat_id": "chat_abc123"
-}
-```
-
-**GET** `/v1/user/{user_id}/chats`
-
-Retrieve all chat sessions for a specific user.
-
-### System Monitoring
-
-**GET** `/health`
-
-Check system status, Qdrant connectivity, and model availability.
-
-**GET** `/v1/collections`
-
-View Qdrant collection information and statistics.
-
-## 🎨 Gradio Web Interface
-
-The included Gradio interface provides an intuitive way to interact with the chatbot:
-
-### Features
-- **Multi-tab Interface**: Chat, History, and User Management
-- **Real-time Health Monitoring**: System status indicators
-- **Sample Questions**: Pre-configured example queries
-- **Chat Session Management**: Easy switching between conversations
-- **User-friendly Design**: Clean, responsive interface
-
-### Access
-- **Gradio Interface**: http://localhost:7860
-- **FastAPI Server**: http://localhost:8081
-- **Qdrant UI**: http://localhost:6333 (when using Docker)
-
-## 🔧 Advanced Configuration
-
-### Vector Database Options
-
-#### Local File Storage (Default)
-```env
-QDRANT_PATH=./qdrant_storage
-# QDRANT_URL=  # Comment out for local storage
-```
-
-#### Docker Qdrant
-```env
-QDRANT_URL=http://localhost:6333
-QDRANT_API_KEY=your_api_key_if_needed  # Optional
-```
-
-### Vector Configuration
-```env
-QDRANT_VECTOR_SIZE=0          # 0 = auto-detect, or specify dimension
-QDRANT_DISTANCE=COSINE        # COSINE, EUCLID, or DOT
-QDRANT_FORCE_RECREATE=true    # Recreate collection on config change
-QDRANT_ON_DISK=false          # Store vectors on disk (saves RAM)
-```
-
-### Model Configuration
-```env
-# vLLM API Endpoints
-VLLM_EMBEDDING_ENDPOINT=http://localhost:11445/v1
-VLLM_CHAT_ENDPOINT=http://localhost:11444/v1
-VLLM_API_KEY=EMPTY
-
-# Model Selection
-EMBEDDING_MODEL=nomic-ai/nomic-embed-text-v1
-CHAT_MODEL=google/gemma-3-12b-it
-```
+- **OpenAI-Compatible API** - Direct integration with existing workflows
+- **Advanced RAG Pipeline** - Document ingestion, chunking, and retrieval
+- **PostgreSQL Database** - Persistent chat history and user sessions  
+- **Qdrant Vector Store** - High-performance semantic search
+- **Gradio Web Interface** - User-friendly chat interface
+- **Production Ready** - Docker deployment with health checks
+- **Environment Control** - All configuration via `.env` file
+- **Auto Migration** - Database schema creation on startup
+- **Security Hardened** - Non-root containers, secure defaults
 
 ## 📁 Project Structure
 
 ```
 chatbot/
-├── app_postgres.py          # Main FastAPI application with PostgreSQL
-├── app/                     # Application components
-│   └── gradio_app.py       # Gradio web interface
-├── database/                # Database components
-│   ├── __init__.py         # Database package init
-│   ├── database.py         # Database manager with PostgreSQL
-│   └── init_db.sql         # Database initialization script
-├── docs/                    # Documentation
-│   ├── STRUCTURE.md        # Project structure details
-│   ├── DEPLOYMENT_SUMMARY.md # Deployment guide
-│   ├── DOCKER_DEPLOYMENT.md  # Docker deployment guide
-│   └── QDRANT_CONFIG_README.md # Qdrant configuration
-├── scripts/                 # Deployment and utility scripts
-│   ├── deploy.sh           # Main deployment script
-│   ├── restart_app.sh      # Application restart utility
-│   └── k8s-deployment.yaml # Kubernetes deployment config
-├── tests/                   # Test files
-│   ├── test_progress_document.md # Progress bar test document
-│   └── test_volume_persistence.sh # Docker volume test script
-├── config.env              # Configuration file
-├── requirements.txt        # Python dependencies
-├── docker-compose.yml      # Docker services composition
-├── startup.sh              # Application startup script
-├── Dockerfile              # Docker build configuration
-├── documents/              # Document storage directory
-├── data/                   # Runtime data (excluded from git)
-│   ├── postgres_data/      # PostgreSQL data
-│   ├── qdrant_storage/     # Qdrant vector storage
-│   └── app_data/          # Application runtime data
-├── logs/                   # Application logs (runtime)
-└── README.md              # This documentation
+├── .dockerignore              # Docker build ignore patterns
+├── .env                       # Environment configuration (not in git)
+├── .gitignore                # Git ignore patterns
+├── Dockerfile                # Production Docker image definition
+├── README.md                 # Main project documentation
+├── requirements.txt          # Python dependencies
+├── deploy.sh                 # Deployment automation script
+├── docker-compose.yml        # Development Docker setup
+├── docker-compose.prod.yml   # Production Docker setup
+├── application_runner.py     # Main application entry point
+├── fastapi_application.py    # FastAPI web application
+├── app/                      # Core application modules
+│   ├── __init__.py          # Package initialization
+│   ├── config.py            # Configuration management
+│   ├── database_initializer.py  # Database setup and validation
+│   ├── document_processing.py   # Document ingestion and processing
+│   ├── embedding_manager.py     # Text embeddings generation
+│   ├── gradio_app.py           # Gradio web interface
+│   ├── models.py               # Pydantic data models
+│   ├── qdrant_manager.py       # Vector database operations
+│   └── rag_pipeline_manager.py # RAG pipeline and chat logic
+├── database/                 # Database management
+│   ├── __init__.py          # Database package initialization
+│   ├── postgresql_manager.py   # PostgreSQL operations
+│   └── schema_initialization.sql # Database schema definition
+└── documents/                # Document storage directory (runtime)
 ```
 
-## 🛠️ Development & Deployment
+## 📋 Quick Start
 
-### Development Mode
+### Prerequisites
+- Docker & Docker Compose
+- vLLM server running (for LLM inference)
+
+### 1. Clone & Configure
 ```bash
-# Install development dependencies
-pip install -r requirements.txt
-
-# Run with auto-reload
-uvicorn app_postgres:app --reload --host 0.0.0.0 --port 8081
+git clone <repository-url>
+cd chatbot
 ```
 
-### Production Deployment
-```bash
-# Use the provided startup script
-chmod +x startup.sh
-./startup.sh
+### 2. Create Environment File
+Create `.env` file with your configuration:
 
-# Or run directly
-python app_postgres.py
+```bash
+# RAG Chatbot Configuration File
+
+# DATABASE CONFIGURATION
+DATABASE_URL=postgresql://chatbot_user:chatbot_password@postgres:5432/chatbot_db
+
+# POSTGRES CONFIGURATION  
+POSTGRES_DB=chatbot_db
+POSTGRES_USER=chatbot_user
+POSTGRES_PASSWORD=chatbot_password
+POSTGRES_INITDB_ARGS=--encoding=UTF8 --locale=C
+
+# QDRANT CONFIGURATION
+QDRANT_URL=http://qdrant:6333
+QDRANT_COLLECTION_NAME=rag_documents
+QDRANT_VECTOR_SIZE=1024
+QDRANT_DISTANCE=COSINE
+QDRANT_FORCE_RECREATE=false
+QDRANT_ON_DISK=true
+
+# QDRANT SERVICE CONFIGURATION
+QDRANT_SERVICE_HTTP_PORT=6333
+QDRANT_SERVICE_GRPC_PORT=6334
+
+# MODEL CONFIGURATION
+EMBEDDING_MODEL=intfloat/multilingual-e5-large-instruct
+CHAT_MODEL=google/gemma-3-12b-it
+
+# vLLM CONFIGURATION
+VLLM_API_KEY=EMPTY
+VLLM_CHAT_ENDPOINT=http://host.docker.internal:8000/v1
+
+# DOCUMENT CONFIGURATION
+DOCUMENTS_PATH=/app/documents
+CHUNK_SIZE=1000
+CHUNK_OVERLAP=200
+
+# RAG CONFIGURATION
+TOP_K=3
+
+# SERVER CONFIGURATION
+HOST=0.0.0.0
+PORT=8081
+
+# GRADIO CONFIGURATION
+API_BASE_URL=http://chatbot_app:8081
+
+# LOGGING
+LOG_LEVEL=INFO
+
+# APPLICATION SETTINGS
+ENVIRONMENT=production
+DEBUG=false
 ```
 
-### Docker Deployment
+### 3. Deploy
 ```bash
-# Start all services
-docker-compose up -d
+# Development deployment
+./deploy.sh up
+
+# Production deployment
+./deploy.sh up prod
+
+# Check status
+./deploy.sh status
 
 # View logs
-docker-compose logs -f
-
-# Stop services
-docker-compose down
+./deploy.sh logs
 ```
 
-## 📚 Document Management
+### 4. Access Services
+- **FastAPI**: http://localhost:8081
+- **Gradio Interface**: http://localhost:7860
+- **API Documentation**: http://localhost:8081/docs
+- **Health Check**: http://localhost:8081/health
 
-### Supported Formats
-- **PDF**: `.pdf` files using PyPDF loader
-- **Word**: `.docx` files using Unstructured loader  
-- **Text**: `.txt` files with UTF-8 encoding
-- **Markdown**: `.md` files for documentation
-- **Python**: `.py` files for code documentation
+## 🏗️ Architecture
 
-### Document Processing Pipeline
-1. **Loading**: Documents loaded from configured directory
-2. **Splitting**: Text split into optimized chunks
-3. **Embedding**: Chunks converted to vector representations
-4. **Storage**: Vectors stored in Qdrant for fast retrieval
-5. **Indexing**: Automatic indexing for similarity search
+### Service Overview
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Gradio UI     │    │   FastAPI App   │    │   PostgreSQL    │
+│   Port: 7860    │◄──►│   Port: 8081    │◄──►│   Port: 5432    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+                                │
+                                ▼
+                       ┌─────────────────┐    ┌─────────────────┐
+                       │   Qdrant DB     │    │   vLLM Server   │
+                       │   Port: 6333    │    │   Port: 8000    │
+                       └─────────────────┘    └─────────────────┘
+```
 
-### Adding Documents
-Simply place supported files in the `documents/` directory and restart the application. The system will automatically process and index new documents.
+### Core Components
 
-## 🔍 Troubleshooting
+#### 1. **FastAPI Application** (`fastapi_application.py`)
+- RESTful API endpoints
+- OpenAI-compatible chat completions
+- Document upload and management
+- User session handling
+- Health monitoring and system status
+
+#### 2. **Application Runner** (`application_runner.py`)
+- Main entry point with multiple modes
+- System initialization and health checks
+- Service orchestration (API, Gradio, or both)
+- Command-line options:
+  - `--mode api`: FastAPI server only
+  - `--mode gradio`: Gradio interface only  
+  - `--mode both`: Both services (development)
+  - `--check-db`: Database initialization and health check
+
+#### 3. **App Package** (`app/`)
+- **config.py**: Environment variable management and validation
+- **database_initializer.py**: System setup and connection validation
+- **document_processing.py**: File ingestion, chunking, and text extraction
+- **embedding_manager.py**: Text-to-vector conversion using transformer models
+- **gradio_app.py**: Web-based chat interface
+- **models.py**: Pydantic schemas for API requests/responses
+- **qdrant_manager.py**: Vector database operations and collection management
+- **rag_pipeline_manager.py**: Chat logic, retrieval, and response generation
+
+#### 4. **Database Package** (`database/`)
+- **postgresql_manager.py**: Database connections, queries, and transactions
+- **schema_initialization.sql**: SQL schema definition and migration scripts
+
+#### 5. **PostgreSQL Database** (`postgres`)
+- Chat history storage
+- User session management
+- Vector point tracking
+- Automatic schema migration
+
+#### 6. **Qdrant Vector Database** (`qdrant`)
+- Document embeddings storage
+- Semantic similarity search
+- Collection management
+- Persistent vector storage
+
+#### 7. **Gradio Interface** (`gradio_app`)
+- Web-based chat interface
+- Document upload UI
+- Real-time chat experience
+
+## 📊 Data Flow
+
+1. **Document Ingestion**
+   - Upload via API → Document Processing → Text Extraction → Chunking
+   - Generate Embeddings → Store in Qdrant → Metadata in PostgreSQL
+
+2. **Chat Flow**
+   - User Query → Embedding Generation → Vector Search (Qdrant)
+   - Retrieve Context → LLM Generation (vLLM) → Response
+   - Store Chat History (PostgreSQL)
+
+3. **System Initialization**
+   - Database Connection → Schema Creation → Qdrant Setup
+   - Document Loading → Embedding Generation → Service Health Check
+
+## 🔧 Configuration
+
+### Environment Variables
+
+All configuration is controlled via the `.env` file. Key sections:
+
+#### Database Settings
+- `DATABASE_URL`: PostgreSQL connection string
+- `POSTGRES_DB/USER/PASSWORD`: Database credentials
+
+#### Vector Store Settings  
+- `QDRANT_URL`: Qdrant service endpoint
+- `QDRANT_COLLECTION_NAME`: Vector collection name
+- `QDRANT_VECTOR_SIZE`: Embedding dimensions
+
+#### Model Configuration
+- `EMBEDDING_MODEL`: HuggingFace embedding model
+- `CHAT_MODEL`: Language model for chat
+- `VLLM_CHAT_ENDPOINT`: vLLM server endpoint
+
+#### Application Settings
+- `HOST/PORT`: Server binding configuration
+- `LOG_LEVEL`: Logging verbosity
+- `ENVIRONMENT`: Runtime environment
+
+### Production vs Development
+
+Use `docker-compose.yml` for development and `docker-compose.prod.yml` for production:
+
+**Development Features:**
+- Hot reloading
+- Debug logging
+- Development-friendly settings
+
+**Production Features:**
+- Resource limits
+- Health checks
+- Optimized performance
+- Security hardening
+
+## 📖 API Reference
+
+### Core Endpoints
+
+#### Chat Completions (OpenAI Compatible)
+```bash
+POST /v1/chat/completions
+Content-Type: application/json
+
+{
+  "model": "chatbot",
+  "messages": [
+    {"role": "user", "content": "Hello!"}
+  ]
+}
+```
+
+#### Create New Chat Session
+```bash
+POST /v1/chat/new
+Content-Type: application/json
+
+{
+  "user_id": "user123"
+}
+```
+
+#### Upload Document
+```bash
+POST /v1/documents/upload-with-progress
+Content-Type: multipart/form-data
+
+file: <document-file>
+```
+
+#### List Documents
+```bash
+GET /v1/documents/list
+```
+
+#### Delete Document (Deactivate)
+```bash
+DELETE /v1/documents/delete
+Content-Type: application/json
+
+{
+  "filename": "document.pdf"
+}
+```
+
+#### Document Statistics
+```bash
+GET /v1/documents/stats
+```
+
+#### Health Check
+```bash
+GET /health
+```
+
+#### System Initialization Status
+```bash
+GET /v1/system/init-status
+```
+
+#### Force Re-initialization (Admin)
+```bash
+POST /v1/system/reinitialize
+```
+
+### Response Formats
+
+#### Chat Response
+```json
+{
+  "id": "chatcmpl-xxx",
+  "object": "chat.completion",
+  "created": 1234567890,
+  "model": "chatbot",
+  "choices": [{
+    "index": 0,
+    "message": {
+      "role": "assistant", 
+      "content": "Response text"
+    },
+    "finish_reason": "stop"
+  }]
+}
+```
+
+## 🚢 Deployment
+
+### Using Deploy Script
+
+The `deploy.sh` script provides comprehensive deployment management:
+
+```bash
+# Available commands
+./deploy.sh build [prod]     # Build images
+./deploy.sh up [prod]        # Start services  
+./deploy.sh down [prod]      # Stop services
+./deploy.sh restart [prod]   # Restart services
+./deploy.sh logs [service]   # View logs
+./deploy.sh status          # Check service status
+./deploy.sh clean           # Clean up resources
+```
+
+### Manual Deployment
+
+#### Development
+```bash
+docker-compose up -d
+```
+
+#### Production
+```bash
+docker-compose -f docker-compose.prod.yml up -d
+```
+
+### Verification Steps
+
+1. **Check Service Health**
+```bash
+curl http://localhost:8081/health
+```
+
+2. **Test Chat API**
+```bash
+curl -X POST http://localhost:8081/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "chatbot",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+3. **Access Web Interface**
+- Open http://localhost:7860 in browser
+
+## 🔍 Monitoring & Troubleshooting
+
+### Health Checks
+
+All services include health checks:
+- **PostgreSQL**: `pg_isready` command
+- **Qdrant**: Collections API endpoint  
+- **FastAPI**: Custom health endpoint
+- **Gradio**: HTTP response check
+
+### Log Analysis
+
+```bash
+# View all logs
+./deploy.sh logs
+
+# View specific service logs
+./deploy.sh logs chatbot_app
+./deploy.sh logs postgres
+./deploy.sh logs qdrant
+./deploy.sh logs gradio_app
+
+# Follow logs in real-time
+docker-compose logs -f chatbot_app
+```
 
 ### Common Issues
 
-**Connection Errors**
-- Verify vLLM servers are running on configured ports
-- Check Qdrant connectivity with `curl http://localhost:6333/health`
-- Ensure all required environment variables are set
-
-**Vector Dimension Mismatches**
-- Set `QDRANT_FORCE_RECREATE=true` to auto-fix collection issues
-- Use `QDRANT_VECTOR_SIZE=0` for automatic dimension detection
-
-**Performance Issues**
-- Increase `TOP_K` value for more comprehensive retrieval
-- Adjust `CHUNK_SIZE` and `CHUNK_OVERLAP` for better document processing
-- Enable `QDRANT_ON_DISK=true` to reduce memory usage
-
-### Health Checks
+#### Database Connection Errors
 ```bash
-# Check FastAPI application health
-curl http://localhost:8081/health
+# Check PostgreSQL status
+./deploy.sh status
+docker-compose exec postgres pg_isready -U chatbot_user
 
-# Check Qdrant status
-curl http://localhost:6333/health
-
-# View collections
-curl http://localhost:8081/v1/collections
+# Reset database
+docker-compose down -v
+docker-compose up -d
 ```
+
+#### Qdrant Collection Issues
+```bash
+# Check collections
+curl http://localhost:6333/collections
+
+# Check specific collection
+curl http://localhost:6333/collections/rag_documents
+```
+
+#### vLLM Connection Issues
+```bash
+# Test vLLM endpoint (outside Docker)
+curl http://localhost:8000/v1/models
+
+# Check Docker host connectivity
+docker-compose exec chatbot_app curl http://host.docker.internal:8000/v1/models
+```
+
+## 🛡️ Security
+
+### Production Security Features
+
+- **Non-root containers**: All services run as non-privileged users
+- **Network isolation**: Services communicate via internal Docker network  
+- **Secure defaults**: Production configurations disable debug features
+- **Environment isolation**: Sensitive data via environment variables
+- **Input validation**: Pydantic models validate all API inputs
+- **CORS configuration**: Controlled cross-origin access
+
+### Security Checklist
+
+- [ ] Change default database passwords
+- [ ] Configure proper CORS origins
+- [ ] Set up HTTPS/TLS in production
+- [ ] Regular security updates
+- [ ] Monitor access logs
+- [ ] Backup encryption
+
+## 🔄 Database Schema & Initialization
+
+### Smart Initialization System
+
+The application includes comprehensive initialization that works with any database:
+
+1. **Connection Validation**: Checks PostgreSQL and Qdrant connectivity
+2. **Database Creation**: Creates database if it doesn't exist 
+3. **Schema Migration**: Runs `database/schema_initialization.sql`
+4. **Qdrant Setup**: Creates vector collections if needed
+5. **Component Initialization**: Sets up all application components
+
+### Initialization Features
+
+- **Production Ready**: Works with existing databases
+- **Retry Logic**: Robust connection handling with retries
+- **Health Monitoring**: Real-time initialization status
+- **Error Recovery**: Graceful handling of partial failures
+- **Manual Re-init**: Force re-initialization endpoint
+
+### Document Handling Features
+
+- **No Physical Storage**: Documents are processed and vectorized in-memory only
+- **Database Metadata**: All document info stored in PostgreSQL with status tracking
+- **Smart Deletion**: Documents are deactivated (is_active=False) instead of deleted
+- **Embedding Cleanup**: Vector embeddings automatically removed when documents deactivated
+- **Graceful Directory Handling**: Missing documents folder doesn't cause errors
+
+### Schema Overview
+
+```sql
+-- Core tables
+users (id, user_id, created_at, last_activity, metadata)
+chat_sessions (id, chat_id, user_id, created_at, last_activity, metadata)  
+chat_messages (id, chat_id, role, content, timestamp, metadata)
+documents (id, filename, original_filename, file_size_bytes, is_active, processing_status, ...)
+vector_points (id, document_id, filename, qdrant_point_id, chunk_index, ...)
+
+-- Automatic features
+- UUID primary keys
+- Timestamp triggers  
+- Cleanup functions
+- Performance indexes
+- Document status tracking
+- Vector point relationships
+```
+
+## 📚 Development
+
+### Local Development Setup
+
+1. **Start dependencies only**
+```bash
+docker-compose up postgres qdrant -d
+```
+
+2. **Run FastAPI locally**
+```bash
+pip install -r requirements.txt
+python application_runner.py
+```
+
+3. **Run Gradio locally**  
+```bash
+python application_runner.py --mode gradio
+```
+
+### Entry Points
+
+- **Primary Entry Point**: `application_runner.py` - Main application launcher
+- **Web Applications**: 
+  - `fastapi_application.py` - FastAPI web server with RAG endpoints
+  - `app/gradio_app.py` - Gradio chat interface (imported by runner)
+
+### Key Features
+
+- **Modular Architecture**: Clean separation of concerns
+- **Production Ready**: Docker deployment with health checks
+- **Database Integration**: PostgreSQL for persistence, Qdrant for vectors
+- **API Compatibility**: OpenAI-compatible chat completions
+- **Web Interface**: Gradio-based chat UI
+- **Configuration Management**: Environment-based configuration
+- **Health Monitoring**: Comprehensive health checks and status endpoints
+- **Document Management**: Upload, process, and manage documents
+- **RAG Pipeline**: Advanced retrieval-augmented generation
 
 ## 🤝 Contributing
 
-This is a production-ready RAG chatbot platform. For issues or improvements:
-
-1. Test thoroughly using the Gradio interface
-2. Check logs for detailed error information
-3. Verify configuration settings match your environment
-4. Ensure all dependencies are properly installed
+1. Fork the repository
+2. Create feature branch: `git checkout -b feature/name`
+3. Make changes following existing patterns
+4. Test with: `./deploy.sh build && ./deploy.sh up`
+5. Submit pull request
 
 ## 📄 License
 
-This project is licensed under the Apache License 2.0. See the license header in source files for details.
+[Your License Here]
+
+## 🆘 Support
+
+For issues and questions:
+- Create GitHub issues for bugs
+- Check logs with `./deploy.sh logs`
+- Review health status with `./deploy.sh status`
 
 ---
 
-**Built with ❤️ using FastAPI, LangChain, Qdrant, and Gradio** 
-
-## File Management System
-
-The application now includes a comprehensive file management system with automatic embedding capabilities:
-
-### 📤 File Upload API
-- **Endpoint**: `POST /v1/documents/upload`
-- **Features**:
-  - Uploads files to the `documents/` folder
-  - Automatically processes and embeds documents using the configured embedding model
-  - Supports multiple file formats: PDF, Word (.docx, .doc), Text (.txt), Markdown (.md), Python (.py)
-  - File size limit: 50MB
-  - Returns processing statistics (chunks added, processing time, etc.)
-
-### 📂 File Listing API
-- **Endpoint**: `GET /v1/documents/list`
-- **Features**:
-  - Lists all documents in the `documents/` folder
-  - Returns file metadata (size, creation/modification dates, file type)
-  - Sorts files by modification date (newest first)
-  - Shows total file count and combined size
-
-### 🗑️ File Deletion API
-- **Endpoint**: `DELETE /v1/documents/delete`
-- **Features**:
-  - Safely deletes files from the `documents/` folder
-  - **🧹 Automatic Embedding Cleanup**: Removes all associated embeddings from the vector store
-  - Includes security checks to prevent directory traversal attacks
-  - Returns confirmation of successful deletion with embeddings count
-  - **Transactional Safety**: Continues with file deletion even if embedding cleanup fails
-
-### 🖥️ Enhanced Gradio Interface
-
-The Gradio interface has been enhanced with a new "📄 Файл бошқаруви" (File Management) tab containing:
-
-#### 📤 File Upload Tab with Progress Tracking
-- **Real-Time Progress Bar**: Visual progress indicator during file upload and processing
-- **Intelligent Staging**: Progress updates for each processing stage:
-  - File validation and reading (5-15%)
-  - Server upload with size-based timing (25-40%)
-  - File type-specific processing - PDF, DOCX, TXT (40-50%)
-  - Document analysis and chunking (50-80%)
-  - Vector embedding creation and storage (80-95%)
-  - Finalization (95-100%)
-- **Adaptive Timing**: Progress speed adjusts based on file size and type
-- **Visual Feedback**: Descriptive status messages in Uzbek language
-- **Enhanced User Experience**: Smooth progress updates with realistic timing
-- Support for multiple file formats: PDF, DOCX, DOC, TXT, MD, PY
-- Processing statistics display with enhanced success feedback
-
-#### 📂 File List Tab  
-- Visual display of all uploaded documents
-- File metadata with emojis for different file types
-- Refresh button to update the list
-- Readable file size formatting
-
-#### 🗑️ File Deletion Tab
-- Simple interface for deleting specific files
-- Safety warnings about irreversible actions
-- Filename input with validation
-- Deletion confirmation messages
-
-### 🔧 Implementation Details
-
-The implementation follows the **minimal change philosophy**:
-
-1. **API Extensions**: Added new Pydantic models and endpoints to the existing FastAPI application
-2. **Gradio Enhancement**: Extended the existing Gradio client class with new methods
-3. **No New Dependencies**: Used existing libraries and patterns
-4. **Security**: Implemented proper file path validation and access controls
-5. **Error Handling**: Comprehensive error handling and user-friendly messages
-
-### 📊 **Progress Bar Technical Implementation**
-
-#### **🎯 Gradio Progress Component**
-- **Framework**: Uses Gradio's built-in `gr.Progress()` component
-- **Integration**: Seamlessly integrated into existing upload handler function
-- **Parameters**: `progress=gr.Progress()` parameter added to `upload_document_handler()`
-
-#### **⚡ Intelligent Progress Stages**
-1. **File Preparation** (0-5%): Initial validation and file size detection
-2. **File Reading** (5-15%): Reading file content and validation
-3. **Upload Simulation** (15-40%): Server upload with realistic timing
-4. **Server Processing** (40-80%): File type-specific processing stages
-5. **Embedding Generation** (80-95%): Vector creation and storage
-6. **Completion** (95-100%): Finalization and success confirmation
-
-#### **📈 Adaptive Timing Algorithm**
-- **File Size Awareness**: Larger files (>5MB) get longer processing delays
-- **File Type Recognition**: Different timing for PDF, DOCX, and text files
-- **Realistic Simulation**: Progress timing reflects actual processing complexity
-- **User Experience**: Smooth visual feedback prevents perceived freezing
-
-#### **🌐 Multilingual Support**
-- **Uzbek Language**: All progress messages in native Uzbek
-- **Descriptive Feedback**: Clear status messages for each processing stage
-- **Error Handling**: Progress updates even when errors occur
-- **Visual Indicators**: Emoji and formatting for enhanced readability
-
-### 🚀 Usage
-
-1. **Start the FastAPI server**: The new endpoints are automatically available
-2. **Access Gradio interface**: Navigate to the "📄 Файл бошқаруви" tab
-3. **Upload files**: Use the upload tab to add new documents
-4. **View files**: Use the list tab to see all uploaded documents  
-5. **Delete files**: Use the deletion tab to remove unwanted documents
-
-All uploaded files are automatically processed and embedded for use in the RAG (Retrieval-Augmented Generation) system.
-
-## 🧪 Testing
-
-The project includes comprehensive test files in the `tests/` directory:
-
-### Test Files
-- **`test_volume_persistence.sh`**: Docker volume persistence testing script
-  - Tests document storage across container restarts
-  - Validates API endpoints for file upload/download
-  - Ensures data persistence with Docker volumes
-  
-- **`test_progress_document.md`**: Large test document for progress bar testing
-  - Demonstrates file upload progress tracking
-  - Tests document processing pipeline
-  - Used for embedding generation performance testing
-
-### Running Tests
-```bash
-# Test Docker volume persistence
-cd tests/
-chmod +x test_volume_persistence.sh
-./test_volume_persistence.sh
-
-# Test file upload with progress tracking using the test document
-# Use the Gradio interface and upload test_progress_document.md
-```
-
-## 🧹 **Embedding Deletion System**
-
-A key enhancement ensures **complete data integrity** when files are deleted:
-
-### **🎯 Automatic Cleanup**
-- **Vector Store Integration**: When a file is deleted, all associated embeddings are automatically removed from Qdrant
-- **Smart Identification**: Uses multiple source identifiers to ensure complete cleanup:
-  - Direct filename matching
-  - Uploaded filename metadata
-  - Source field matching (`uploaded_{filename}`)
-
-### **🔧 Technical Implementation**
-- **New Vector Store Method**: `delete_documents_by_source()` in `SimpleQdrantVectorStore`
-- **Qdrant Integration**: Uses scroll and filter operations to find and delete matching embeddings
-- **Batch Processing**: Efficiently handles multiple embeddings per document
-- **Error Resilience**: File deletion continues even if embedding cleanup encounters issues
-
-### **📊 User Feedback**
-- **Deletion Statistics**: API returns count of deleted embeddings
-- **Enhanced UI**: Gradio interface shows:
-  - Number of embeddings removed
-  - Success confirmation with detailed feedback  
-  - Clear messaging when no embeddings are found
-
-### **🛡️ Data Integrity**
-- **No Orphaned Data**: Ensures no leftover embeddings consume storage or affect search results
-- **Consistent State**: Maintains perfect sync between filesystem and vector store
-- **Audit Trail**: Comprehensive logging of all deletion operations
-
-This implementation provides **enterprise-grade data management** with full lifecycle tracking from upload to deletion. 
+**Ready to deploy?** Start with `./deploy.sh up` and access your chatbot at http://localhost:7860! 
