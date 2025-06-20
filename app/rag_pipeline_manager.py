@@ -8,7 +8,7 @@ Handles chat logic, LLM initialization, and RAG chain creation.
 import logging
 import time
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from langchain.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
@@ -42,22 +42,40 @@ def init_llm(config: Dict[str, Any]) -> ChatOpenAI:
 
 def get_qa_prompt() -> PromptTemplate:
     """Get the QA prompt template"""
-    template = """Siz professional yordamchi botsiz. Sizning vazifangiz foydalanuvchiga berilgan kontekst asosida aniq va foydali javob berishdir.
 
-KONTEKST:
-{context}
+    template = """Siz veb-sayt yordamchi chatbotisiz. Foydalanuvchilarga sayt bo'yicha navigatsiya qilish va kerakli ma'lumotlarni topishda yordam berasiz.
 
-SUHBAT TARIXI:
-{chat_history}
-
-FOYDALANUVCHI SAVOLI: {question}
+KONTEKST: {context}
+SUHBAT TARIXI: {chat_history}
+FOYDALANUVCHI XABARI: {question}
 
 JAVOB BERISH QOIDALARI:
-1. Faqat berilgan kontekst va suhbat tarixidagi ma'lumotlardan foydalaning
-2. Agar javob kontekstda yo'q bo'lsa, "Kechirasiz, bu savolga javob berish uchun yetarli ma'lumot yo'q" deb javob bering
-3. Javobni aniq, qisqa va tushunarli qiling
-4. O'zbek tilida javob bering
-5. Mumkin bo'lsa, misollar va aniq ma'lumotlar keltiring
+1. TILNI ANIQLASH: Foydalanuvchi qaysi tilda yozgan bo'lsa, o'sha tilda javob bering
+   - O'zbek (lotin/kirill), Rus, Ingliz tillarini qo'llab-quvvatlaysiz
+
+2. SALOMLASHISH VA XUSHMUOMALA:
+   - Salom, rahmat, xayr kabi so'zlarga mos javob bering
+   - Sayt kontekstida professional ohangda gapiring
+
+3. JAVOB BERISH MANTIQ - QATTIQ QOIDALAR:
+   - FAQAT KONTEKST va SUHBAT TARIXIdagi sayt ma'lumotlaridan foydalaning
+   - KONTEKST bo'sh bo'lsa: FAQAT salomlashish, rahmat, xayrlashish kabi oddiy muloqotga javob bering
+   - KONTEKST bo'sh bo'lganda HECH QANDAY umumiy ma'lumot (paytaxt, tarix, fan va boshqalar) BERMANG
+   - Agar savolga javob saytda yo'q bo'lsa: "Bunday ma'lumotlar bizning bazamizda yo'q. Iltimos, kerakli hujjatlarni bazaga yuklang, ushanda sizga aniqroq javob bera olaman."
+   - Navigatsiya yordam: faqat kontekstdagi sahifa, link, bo'limlarni ko'rsating
+
+4. JAVOB SIFATI:
+   - Aniq, qisqa va amaliy
+   - Faqat sayt ma'lumotlari: sahifa linkları, bo'lim nomlari, xizmat tavsiflarini bering
+   - Qadamlar bo'yicha yo'l-yo'riq (agar sayt kontekstida bo'lsa)
+   - Sayt ichida qidirishga yordam bering
+
+5. VEB-SAYT YORDAMCHISI MAXSUS VAZIFALAR:
+   - Salomlashish → "Saytimizga xush kelibsiz! Sizga sayt bo'yicha qanday yordam bera olaman?"
+   - Rahmat → "Arzimaydi! Sayt haqida boshqa savollaringiz bo'lsa, so'rang"
+   - Xayrlashish → "Xayr! Sayt haqida keyinroq savollaringiz bo'lsa, qaytib keling"
+   - KONTEKST bo'sh + sayt tashqaridagi savol → "Kechirasiz, men faqat bazamizdagi ma'lumotlar bo'yicha yordam bera olaman. Kerakli hujjatlarni bazaga yuklang."
+   - Noaniq savol → "Saytning qaysi bo'limi haqida ma'lumot olmoqchisiz?"
 
 JAVOB:"""
 
@@ -116,11 +134,8 @@ def create_qa_chain(vectorstore: SimpleQdrantVectorStore, llm: ChatOpenAI, promp
             top_k = config.get("top_k", 3)
             docs = vectorstore.search(question, k=top_k)
             
-            if not docs:
-                return "Kechirasiz, sizning savolingizga javob berish uchun tegishli ma'lumot topilmadi. Iltimos, savolni aniqroq qiling yoki boshqa mavzu bo'yicha so'rang."
-            
-            # Format context
-            context = format_docs(docs)
+            # Format context (empty string if no docs found)
+            context = format_docs(docs) if docs else ""
             
             # Format chat history
             history_text = format_chat_history(chat_history or [])
@@ -193,7 +208,7 @@ class ChatService:
                 ChatMessage(
                     role=msg["role"],
                     content=msg["content"],
-                    timestamp=datetime.fromisoformat(msg["timestamp"]) if msg.get("timestamp") else datetime.now()
+                    timestamp=datetime.fromisoformat(msg["timestamp"]) if msg.get("timestamp") else datetime.now(timezone.utc)
                 )
                 for msg in messages
             ]
@@ -208,7 +223,7 @@ class ChatService:
                 "chat_id": chat_id,
                 "user_id": user_id,
                 "message": response,
-                "timestamp": datetime.now()
+                "timestamp": datetime.now(timezone.utc)
             }
             
         except Exception as e:
@@ -252,7 +267,10 @@ class ChatService:
             if session:
                 # Check if session is expired (more than 1 hour of inactivity)
                 last_activity = datetime.fromisoformat(session["last_activity"])
-                now = datetime.now()
+                # Make both datetimes timezone-aware for comparison
+                if last_activity.tzinfo is None:
+                    last_activity = last_activity.replace(tzinfo=timezone.utc)
+                now = datetime.now(timezone.utc)
                 time_diff = now - last_activity
                 session_expired = time_diff.total_seconds() > 3600  # 1 hour
                 

@@ -2,6 +2,11 @@
 
 A high-performance **Retrieval Augmented Generation (RAG)** chatbot system built with **FastAPI**, **PostgreSQL**, **Qdrant vector database**, and **Gradio interface**. Designed for enterprise deployment with Docker containerization and complete environment variable control.
 
+[![Docker](https://img.shields.io/badge/Docker-Ready-blue?logo=docker)](https://www.docker.com/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green?logo=fastapi)](https://fastapi.tiangolo.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-blue?logo=postgresql)](https://www.postgresql.org/)
+[![Qdrant](https://img.shields.io/badge/Qdrant-Latest-purple)](https://qdrant.tech/)
+
 ## 🚀 Features
 
 - **OpenAI-Compatible API** - Direct integration with existing workflows
@@ -13,18 +18,19 @@ A high-performance **Retrieval Augmented Generation (RAG)** chatbot system built
 - **Environment Control** - All configuration via `.env` file
 - **Auto Migration** - Database schema creation on startup
 - **Security Hardened** - Non-root containers, secure defaults
+- **Comprehensive Deployment** - One-script deployment for dev/prod
 
 ## 📁 Project Structure
 
 ```
 chatbot/
 ├── .dockerignore              # Docker build ignore patterns
-├── .env                       # Environment configuration (not in git)
+├── .env                       # Environment configuration (create from template)
 ├── .gitignore                # Git ignore patterns
 ├── Dockerfile                # Production Docker image definition
-├── README.md                 # Main project documentation
+├── README.md                 # This documentation
 ├── requirements.txt          # Python dependencies
-├── deploy.sh                 # Deployment automation script
+├── deploy.sh                 # Comprehensive deployment script ⭐
 ├── docker-compose.yml        # Development Docker setup
 ├── docker-compose.prod.yml   # Production Docker setup
 ├── application_runner.py     # Main application entry point
@@ -46,23 +52,25 @@ chatbot/
 └── documents/                # Document storage directory (runtime)
 ```
 
-## 📋 Quick Start
+## ⚡ Quick Start
 
 ### Prerequisites
-- Docker & Docker Compose
-- vLLM server running (for LLM inference)
+- **Docker** & **Docker Compose** (required)
+- **vLLM server** running (for LLM inference)
+- **4GB+ RAM** recommended
 
-### 1. Clone & Configure
+### 1. Clone & Setup
 ```bash
 git clone <repository-url>
 cd chatbot
 ```
 
-### 2. Create Environment File
+### 2. Create Environment Configuration
 Create `.env` file with your configuration:
 
 ```bash
 # RAG Chatbot Configuration File
+# ============================================================
 
 # DATABASE CONFIGURATION
 DATABASE_URL=postgresql://chatbot_user:chatbot_password@postgres:5432/chatbot_db
@@ -106,6 +114,9 @@ HOST=0.0.0.0
 PORT=8081
 
 # GRADIO CONFIGURATION
+GRADIO_PORT=7860
+GRADIO_HOST=0.0.0.0
+GRADIO_SHARE=false
 API_BASE_URL=http://chatbot_app:8081
 
 # LOGGING
@@ -116,30 +127,45 @@ ENVIRONMENT=production
 DEBUG=false
 ```
 
-### 3. Deploy
-```bash
-# Development deployment
-./deploy.sh up
+### 3. Deploy with One Command
 
-# Production deployment
+The project includes a comprehensive deployment script for easy management:
+
+```bash
+# Development deployment (with hot reload)
+./deploy.sh up dev
+
+# Production deployment (optimized)
 ./deploy.sh up prod
 
-# Check status
+# Check service status
 ./deploy.sh status
 
 # View logs
 ./deploy.sh logs
+
+# Clean shutdown
+./deploy.sh down
 ```
 
-### 4. Access Services
-- **FastAPI**: http://localhost:8081
+### 4. Access Your Services
+
+**Development Environment:**
+- **FastAPI API**: http://localhost:8081
 - **Gradio Interface**: http://localhost:7860
 - **API Documentation**: http://localhost:8081/docs
 - **Health Check**: http://localhost:8081/health
+- **Qdrant Dashboard**: http://localhost:6333/dashboard
+
+**Production Environment:**
+- **Combined App**: http://localhost:8081 (FastAPI + Gradio)
+- **API Documentation**: http://localhost:8081/docs
+- **Health Check**: http://localhost:8081/health
+- **Qdrant Dashboard**: http://localhost:6333/dashboard
 
 ## 🏗️ Architecture
 
-### Service Overview
+### System Overview
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   Gradio UI     │    │   FastAPI App   │    │   PostgreSQL    │
@@ -155,430 +181,371 @@ DEBUG=false
 
 ### Core Components
 
-#### 1. **FastAPI Application** (`fastapi_application.py`)
-- RESTful API endpoints
+#### 1. **Application Entry Points**
+
+**Application Runner** (`application_runner.py`)
+- Main entry point with multiple modes
+- System initialization and health checks
+- Service orchestration options:
+  - `--mode api`: FastAPI server only
+  - `--mode gradio`: Gradio interface only  
+  - `--mode both`: Both services (production default)
+  - `--check-db`: Database initialization and health check
+
+**FastAPI Application** (`fastapi_application.py`)
+- Complete web application with all endpoints
 - OpenAI-compatible chat completions
 - Document upload and management
 - User session handling
 - Health monitoring and system status
 
-#### 2. **Application Runner** (`application_runner.py`)
-- Main entry point with multiple modes
-- System initialization and health checks
-- Service orchestration (API, Gradio, or both)
-- Command-line options:
-  - `--mode api`: FastAPI server only
-  - `--mode gradio`: Gradio interface only  
-  - `--mode both`: Both services (development)
-  - `--check-db`: Database initialization and health check
+#### 2. **Application Package** (`app/`)
 
-#### 3. **App Package** (`app/`)
 - **config.py**: Environment variable management and validation
 - **database_initializer.py**: System setup and connection validation
 - **document_processing.py**: File ingestion, chunking, and text extraction
 - **embedding_manager.py**: Text-to-vector conversion using transformer models
-- **gradio_app.py**: Web-based chat interface
+- **gradio_app.py**: Web-based chat interface with multi-language support
 - **models.py**: Pydantic schemas for API requests/responses
 - **qdrant_manager.py**: Vector database operations and collection management
 - **rag_pipeline_manager.py**: Chat logic, retrieval, and response generation
 
-#### 4. **Database Package** (`database/`)
+#### 3. **Database Package** (`database/`)
+
 - **postgresql_manager.py**: Database connections, queries, and transactions
 - **schema_initialization.sql**: SQL schema definition and migration scripts
+- Automatic schema creation and validation
+- Connection pooling and error handling
 
-#### 5. **PostgreSQL Database** (`postgres`)
-- Chat history storage
-- User session management
-- Vector point tracking
-- Automatic schema migration
+#### 4. **Vector & Storage Systems**
 
-#### 6. **Qdrant Vector Database** (`qdrant`)
-- Document embeddings storage
-- Semantic similarity search
-- Collection management
-- Persistent vector storage
+**PostgreSQL Database**
+- Chat history storage with user sessions
+- Conversation threading and context management
+- User preference and session state tracking
+- Automatic schema migration and validation
 
-#### 7. **Gradio Interface** (`gradio_app`)
-- Web-based chat interface
-- Document upload UI
-- Real-time chat experience
+**Qdrant Vector Database**
+- Document embeddings storage with metadata
+- Semantic similarity search with filtering
+- Collection management and optimization
+- Persistent vector storage with backup
 
-## 📊 Data Flow
+## 🚀 Deployment Options
 
-1. **Document Ingestion**
-   - Upload via API → Document Processing → Text Extraction → Chunking
-   - Generate Embeddings → Store in Qdrant → Metadata in PostgreSQL
+### Development Mode
+```bash
+# Separate services for easier debugging
+./deploy.sh up dev
 
-2. **Chat Flow**
-   - User Query → Embedding Generation → Vector Search (Qdrant)
-   - Retrieve Context → LLM Generation (vLLM) → Response
-   - Store Chat History (PostgreSQL)
+# FastAPI: http://localhost:8081
+# Gradio: http://localhost:7860 (separate container)
+# Hot reload enabled
+# Debug logging active
+```
 
-3. **System Initialization**
-   - Database Connection → Schema Creation → Qdrant Setup
-   - Document Loading → Embedding Generation → Service Health Check
+### Production Mode
+```bash
+# Optimized single container
+./deploy.sh up prod
 
-## 🔧 Configuration
+# Combined: http://localhost:8081 (FastAPI + Gradio)
+# Resource optimized
+# Security hardened
+# Health checks enabled
+```
 
-### Environment Variables
+### Deployment Script Commands
 
-All configuration is controlled via the `.env` file. Key sections:
+```bash
+# Core Commands
+./deploy.sh up [dev|prod]        # Start services
+./deploy.sh down [dev|prod]      # Stop services
+./deploy.sh restart [dev|prod]   # Restart services
+./deploy.sh status [dev|prod]    # Show status
+./deploy.sh logs [dev|prod] [service]  # View logs
+./deploy.sh clean               # Clean everything
 
-#### Database Settings
-- `DATABASE_URL`: PostgreSQL connection string
-- `POSTGRES_DB/USER/PASSWORD`: Database credentials
+# Examples
+./deploy.sh up prod             # Start production
+./deploy.sh logs dev chatbot_app # Dev logs for specific service
+./deploy.sh status prod         # Production status
+```
 
-#### Vector Store Settings  
-- `QDRANT_URL`: Qdrant service endpoint
-- `QDRANT_COLLECTION_NAME`: Vector collection name
-- `QDRANT_VECTOR_SIZE`: Embedding dimensions
+## 📚 API Documentation
 
-#### Model Configuration
-- `EMBEDDING_MODEL`: HuggingFace embedding model
-- `CHAT_MODEL`: Language model for chat
-- `VLLM_CHAT_ENDPOINT`: vLLM server endpoint
+### OpenAI-Compatible Endpoints
 
-#### Application Settings
-- `HOST/PORT`: Server binding configuration
-- `LOG_LEVEL`: Logging verbosity
-- `ENVIRONMENT`: Runtime environment
-
-### Production vs Development
-
-Use `docker-compose.yml` for development and `docker-compose.prod.yml` for production:
-
-**Development Features:**
-- Hot reloading
-- Debug logging
-- Development-friendly settings
-
-**Production Features:**
-- Resource limits
-- Health checks
-- Optimized performance
-- Security hardening
-
-## 📖 API Reference
-
-### Core Endpoints
-
-#### Chat Completions (OpenAI Compatible)
+**Chat Completions** (OpenAI Compatible)
 ```bash
 POST /v1/chat/completions
 Content-Type: application/json
 
 {
-  "model": "chatbot",
+  "model": "rag-chatbot",
   "messages": [
-    {"role": "user", "content": "Hello!"}
-  ]
+    {"role": "user", "content": "Your question here"}
+  ],
+  "user": "user_123"
 }
 ```
 
-#### Create New Chat Session
+**RAG Chat with History**
 ```bash
-POST /v1/chat/new
+POST /v1/chat
 Content-Type: application/json
 
 {
-  "user_id": "user123"
+  "user_id": "user_123",
+  "message": "Your question here",
+  "chat_id": "optional_chat_id"
 }
 ```
 
-#### Upload Document
+**Document Management**
 ```bash
-POST /v1/documents/upload-with-progress
-Content-Type: multipart/form-data
-
-file: <document-file>
+POST /v1/documents/upload-with-progress  # Upload documents
+GET /v1/documents/list                   # List documents
+DELETE /v1/documents/delete              # Delete documents
 ```
 
-#### List Documents
+**User & Session Management**
 ```bash
-GET /v1/documents/list
+POST /v1/chat/new                       # Create new chat
+POST /v1/user/session-status           # Check user status
+GET /v1/user/{user_id}/chats           # List user chats
 ```
 
-#### Delete Document (Deactivate)
+**System Monitoring**
 ```bash
-DELETE /v1/documents/delete
-Content-Type: application/json
-
-{
-  "filename": "document.pdf"
-}
+GET /health                            # System health
+GET /v1/system/init-status            # Initialization status
+POST /v1/system/reinitialize          # Force reinitialize
 ```
 
-#### Document Statistics
-```bash
-GET /v1/documents/stats
-```
+### Full API Documentation
+- **Interactive Docs**: http://localhost:8081/docs
+- **ReDoc**: http://localhost:8081/redoc
 
-#### Health Check
-```bash
-GET /health
-```
+## 🔧 Configuration
 
-#### System Initialization Status
-```bash
-GET /v1/system/init-status
-```
+### Environment Variables
 
-#### Force Re-initialization (Admin)
-```bash
-POST /v1/system/reinitialize
-```
+All configuration is handled through the `.env` file. Key categories:
 
-### Response Formats
+**Database Settings**
+- `DATABASE_URL`: PostgreSQL connection string
+- `POSTGRES_*`: Database credentials and settings
 
-#### Chat Response
-```json
-{
-  "id": "chatcmpl-xxx",
-  "object": "chat.completion",
-  "created": 1234567890,
-  "model": "chatbot",
-  "choices": [{
-    "index": 0,
-    "message": {
-      "role": "assistant", 
-      "content": "Response text"
-    },
-    "finish_reason": "stop"
-  }]
-}
-```
+**Vector Database**
+- `QDRANT_URL`: Qdrant connection URL
+- `QDRANT_COLLECTION_NAME`: Collection for documents
+- `QDRANT_VECTOR_SIZE`: Embedding dimensions
 
-## 🚢 Deployment
+**Model Configuration**
+- `EMBEDDING_MODEL`: HuggingFace embedding model
+- `CHAT_MODEL`: LLM model identifier
+- `VLLM_CHAT_ENDPOINT`: vLLM server endpoint
 
-### Using Deploy Script
+**Application Settings**
+- `ENVIRONMENT`: development/production
+- `LOG_LEVEL`: Logging verbosity
+- `DEBUG`: Debug mode toggle
 
-The `deploy.sh` script provides comprehensive deployment management:
+### Model Requirements
 
-```bash
-# Available commands
-./deploy.sh build [prod]     # Build images
-./deploy.sh up [prod]        # Start services  
-./deploy.sh down [prod]      # Stop services
-./deploy.sh restart [prod]   # Restart services
-./deploy.sh logs [service]   # View logs
-./deploy.sh status          # Check service status
-./deploy.sh clean           # Clean up resources
-```
+**Embedding Model**: `intfloat/multilingual-e5-large-instruct`
+- Supports multiple languages including Uzbek
+- 1024-dimensional embeddings
+- Optimized for retrieval tasks
 
-### Manual Deployment
+**Chat Model**: Compatible with vLLM
+- Recommended: `google/gemma-3-12b-it`
+- OpenAI API compatible endpoint
+- Streaming response support
 
-#### Development
-```bash
-docker-compose up -d
-```
-
-#### Production
-```bash
-docker-compose -f docker-compose.prod.yml up -d
-```
-
-### Verification Steps
-
-1. **Check Service Health**
-```bash
-curl http://localhost:8081/health
-```
-
-2. **Test Chat API**
-```bash
-curl -X POST http://localhost:8081/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "chatbot",
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'
-```
-
-3. **Access Web Interface**
-- Open http://localhost:7860 in browser
-
-## 🔍 Monitoring & Troubleshooting
-
-### Health Checks
-
-All services include health checks:
-- **PostgreSQL**: `pg_isready` command
-- **Qdrant**: Collections API endpoint  
-- **FastAPI**: Custom health endpoint
-- **Gradio**: HTTP response check
-
-### Log Analysis
-
-```bash
-# View all logs
-./deploy.sh logs
-
-# View specific service logs
-./deploy.sh logs chatbot_app
-./deploy.sh logs postgres
-./deploy.sh logs qdrant
-./deploy.sh logs gradio_app
-
-# Follow logs in real-time
-docker-compose logs -f chatbot_app
-```
-
-### Common Issues
-
-#### Database Connection Errors
-```bash
-# Check PostgreSQL status
-./deploy.sh status
-docker-compose exec postgres pg_isready -U chatbot_user
-
-# Reset database
-docker-compose down -v
-docker-compose up -d
-```
-
-#### Qdrant Collection Issues
-```bash
-# Check collections
-curl http://localhost:6333/collections
-
-# Check specific collection
-curl http://localhost:6333/collections/rag_documents
-```
-
-#### vLLM Connection Issues
-```bash
-# Test vLLM endpoint (outside Docker)
-curl http://localhost:8000/v1/models
-
-# Check Docker host connectivity
-docker-compose exec chatbot_app curl http://host.docker.internal:8000/v1/models
-```
-
-## 🛡️ Security
-
-### Production Security Features
-
-- **Non-root containers**: All services run as non-privileged users
-- **Network isolation**: Services communicate via internal Docker network  
-- **Secure defaults**: Production configurations disable debug features
-- **Environment isolation**: Sensitive data via environment variables
-- **Input validation**: Pydantic models validate all API inputs
-- **CORS configuration**: Controlled cross-origin access
-
-### Security Checklist
-
-- [ ] Change default database passwords
-- [ ] Configure proper CORS origins
-- [ ] Set up HTTPS/TLS in production
-- [ ] Regular security updates
-- [ ] Monitor access logs
-- [ ] Backup encryption
-
-## 🔄 Database Schema & Initialization
-
-### Smart Initialization System
-
-The application includes comprehensive initialization that works with any database:
-
-1. **Connection Validation**: Checks PostgreSQL and Qdrant connectivity
-2. **Database Creation**: Creates database if it doesn't exist 
-3. **Schema Migration**: Runs `database/schema_initialization.sql`
-4. **Qdrant Setup**: Creates vector collections if needed
-5. **Component Initialization**: Sets up all application components
-
-### Initialization Features
-
-- **Production Ready**: Works with existing databases
-- **Retry Logic**: Robust connection handling with retries
-- **Health Monitoring**: Real-time initialization status
-- **Error Recovery**: Graceful handling of partial failures
-- **Manual Re-init**: Force re-initialization endpoint
-
-### Document Handling Features
-
-- **No Physical Storage**: Documents are processed and vectorized in-memory only
-- **Database Metadata**: All document info stored in PostgreSQL with status tracking
-- **Smart Deletion**: Documents are deactivated (is_active=False) instead of deleted
-- **Embedding Cleanup**: Vector embeddings automatically removed when documents deactivated
-- **Graceful Directory Handling**: Missing documents folder doesn't cause errors
-
-### Schema Overview
-
-```sql
--- Core tables
-users (id, user_id, created_at, last_activity, metadata)
-chat_sessions (id, chat_id, user_id, created_at, last_activity, metadata)  
-chat_messages (id, chat_id, role, content, timestamp, metadata)
-documents (id, filename, original_filename, file_size_bytes, is_active, processing_status, ...)
-vector_points (id, document_id, filename, qdrant_point_id, chunk_index, ...)
-
--- Automatic features
-- UUID primary keys
-- Timestamp triggers  
-- Cleanup functions
-- Performance indexes
-- Document status tracking
-- Vector point relationships
-```
-
-## 📚 Development
+## 🧪 Development
 
 ### Local Development Setup
 
-1. **Start dependencies only**
+1. **Clone and setup**:
 ```bash
-docker-compose up postgres qdrant -d
+git clone <repo-url>
+cd chatbot
+cp .env.example .env  # Edit configuration
 ```
 
-2. **Run FastAPI locally**
+2. **Start development environment**:
 ```bash
-pip install -r requirements.txt
-python application_runner.py
+./deploy.sh up dev
 ```
 
-3. **Run Gradio locally**  
+3. **Development features**:
+- **Hot reload**: Code changes auto-reload
+- **Volume mounts**: Local file editing
+- **Separate services**: Independent debugging
+- **Debug logging**: Detailed error information
+
+### Adding Documents
+
 ```bash
-python application_runner.py --mode gradio
+# Copy documents to the documents/ folder
+cp your-docs/* documents/
+
+# Restart to reindex
+./deploy.sh restart
 ```
 
-### Entry Points
+### Monitoring & Debugging
 
-- **Primary Entry Point**: `application_runner.py` - Main application launcher
-- **Web Applications**: 
-  - `fastapi_application.py` - FastAPI web server with RAG endpoints
-  - `app/gradio_app.py` - Gradio chat interface (imported by runner)
+```bash
+# View all logs
+./deploy.sh logs dev
 
-### Key Features
+# View specific service logs
+./deploy.sh logs dev chatbot_app
+./deploy.sh logs dev gradio_app
 
-- **Modular Architecture**: Clean separation of concerns
-- **Production Ready**: Docker deployment with health checks
-- **Database Integration**: PostgreSQL for persistence, Qdrant for vectors
-- **API Compatibility**: OpenAI-compatible chat completions
-- **Web Interface**: Gradio-based chat UI
-- **Configuration Management**: Environment-based configuration
-- **Health Monitoring**: Comprehensive health checks and status endpoints
-- **Document Management**: Upload, process, and manage documents
-- **RAG Pipeline**: Advanced retrieval-augmented generation
+# Check system health
+curl http://localhost:8081/health
+
+# Monitor initialization
+curl http://localhost:8081/v1/system/init-status
+```
+
+## 🛡️ Security Features
+
+- **Non-root containers**: Enhanced security
+- **Environment isolation**: Secure configuration
+- **CORS configuration**: Controlled API access
+- **Input validation**: Pydantic model validation
+- **Health checks**: Automated monitoring
+- **Resource limits**: Memory and CPU constraints
+
+## 📊 Performance
+
+### Resource Requirements
+
+**Minimum Requirements**:
+- 4GB RAM
+- 2 CPU cores
+- 10GB disk space
+
+**Recommended Production**:
+- 8GB RAM
+- 4 CPU cores
+- 50GB disk space
+- SSD storage
+
+### Optimization Features
+
+- **Vector caching**: Faster similarity search
+- **Connection pooling**: Efficient database usage
+- **Lazy loading**: Reduced startup time
+- **Async processing**: Non-blocking operations
+- **Resource limits**: Controlled memory usage
+
+## 🔄 Maintenance
+
+### Backup & Recovery
+
+```bash
+# Backup database
+docker exec chatbot_postgres_prod pg_dump -U chatbot_user chatbot_db > backup.sql
+
+# Backup Qdrant (if using persistent storage)
+docker cp qdrant_prod:/qdrant/storage ./qdrant_backup
+```
+
+### Updates & Upgrades
+
+```bash
+# Update application
+git pull
+./deploy.sh down prod
+./deploy.sh up prod
+
+# Clean rebuild
+./deploy.sh clean
+./deploy.sh up prod
+```
+
+### Monitoring
+
+Monitor these key metrics:
+- **Health endpoint**: `/health`
+- **Database connections**: PostgreSQL metrics
+- **Vector operations**: Qdrant dashboard
+- **Memory usage**: Docker stats
+- **Response times**: Application logs
+
+## 🆘 Troubleshooting
+
+### Common Issues
+
+**Services won't start**:
+```bash
+# Check prerequisites
+./deploy.sh status
+docker info
+
+# Check logs
+./deploy.sh logs
+```
+
+**Database connection errors**:
+```bash
+# Verify PostgreSQL
+docker exec -it chatbot_postgres_prod psql -U chatbot_user -d chatbot_db
+
+# Check environment variables
+grep DATABASE_URL .env
+```
+
+**Vector search issues**:
+```bash
+# Check Qdrant status
+curl http://localhost:6333/collections
+
+# Reinitialize system
+curl -X POST http://localhost:8081/v1/system/reinitialize
+```
+
+**Performance issues**:
+```bash
+# Monitor resources
+docker stats
+
+# Check health status
+curl http://localhost:8081/health
+```
+
+### Getting Help
+
+1. **Check logs**: `./deploy.sh logs [environment] [service]`
+2. **Verify health**: `curl http://localhost:8081/health`
+3. **Review configuration**: Check `.env` file settings
+4. **Monitor resources**: `docker stats`
+
+## 📜 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create feature branch: `git checkout -b feature/name`
-3. Make changes following existing patterns
-4. Test with: `./deploy.sh build && ./deploy.sh up`
-5. Submit pull request
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-## 📄 License
+## 📞 Support
 
-[Your License Here]
-
-## 🆘 Support
-
-For issues and questions:
-- Create GitHub issues for bugs
-- Check logs with `./deploy.sh logs`
-- Review health status with `./deploy.sh status`
+For support and questions:
+- Create an issue in the repository
+- Check the troubleshooting section
+- Review the API documentation at `/docs`
 
 ---
 
-**Ready to deploy?** Start with `./deploy.sh up` and access your chatbot at http://localhost:7860! 
+**Built with ❤️ for enterprise RAG applications** 

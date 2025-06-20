@@ -62,36 +62,44 @@ services:
 
   # Main FastAPI Application
   chatbot_app:
-    build: 
-      context: .
-      dockerfile: Dockerfile
-      args:
-        CONTAINER_USER: ${CONTAINER_USER:-appuser}
-        CONTAINER_UID: ${CONTAINER_UID:-1004}
-    image: chatbot:prod
-    container_name: chatbot_app_prod
+    # build: 
+    #   context: .
+    #   dockerfile: Dockerfile
+    #   args:
+    #     CONTAINER_USER: ${CONTAINER_USER:-appuser}
+    #     CONTAINER_UID: ${CONTAINER_UID:-1004}
+    image: ragchatbot:1.0.0
+    container_name: ragchatbot
     ports:
-      - "${PORT:-8081}:${PORT:-8081}"
+      - "${PORT}:${PORT}"
+      - "${GRADIO_PORT}:${GRADIO_PORT}"
     env_file:
       - .env
     environment:
       # Application Configuration
-      - ENVIRONMENT=${ENVIRONMENT:-production}
-      - DEBUG=${DEBUG:-false}
-      - RELOAD=${RELOAD:-false}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - HOST=${HOST:-0.0.0.0}
-      - PORT=${PORT:-8081}
+      - ENVIRONMENT=${ENVIRONMENT}
+      - DEBUG=${DEBUG}
+      - RELOAD=${RELOAD}
+      - LOG_LEVEL=${LOG_LEVEL}
+      - HOST=${HOST}
+      - PORT=${PORT}
       # PostgreSQL Database Configuration
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
-      - POSTGRES_DB=${POSTGRES_DB:-chatbot_db}
-      - POSTGRES_USER=${POSTGRES_USER:-chatbot_user}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-chatbot_password}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-chatbot_user}:${POSTGRES_PASSWORD:-chatbot_password}@postgres:5432/${POSTGRES_DB:-chatbot_db}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       # vLLM Configuration (loaded from .env file)
       # Other configurations loaded from .env file
       # Only override Qdrant URL to ensure internal Docker network connectivity
+
+      - GRADIO_SHARE=${GRADIO_SHARE}
+      - GRADIO_HOST=${GRADIO_HOST}
+      - GRADIO_PORT=${GRADIO_PORT}
+      - API_BASE_URL=http://localhost:${PORT}
+
+      # Qdrant Configuration
       - QDRANT_URL=http://qdrant:6333
     depends_on:
       postgres:
@@ -115,46 +123,46 @@ services:
           memory: 2G
 
   # Gradio Interface
-  gradio_app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        CONTAINER_USER: ${CONTAINER_USER:-appuser}
-        CONTAINER_UID: ${CONTAINER_UID:-1004}
-    image: chatbot:prod
-    container_name: gradio_app_prod
-    ports:
-      - "${GRADIO_PORT:-7860}:${GRADIO_PORT:-7860}"
-    command: ["python", "application_runner.py", "--mode", "both"]
-    env_file:
-      - .env
-    environment:
-      # Gradio Configuration
-      - ENVIRONMENT=${ENVIRONMENT:-production}
-      - DEBUG=${DEBUG:-false}
-      - GRADIO_SHARE=${GRADIO_SHARE:-false}
-      - GRADIO_HOST=${GRADIO_HOST:-0.0.0.0}
-      - GRADIO_PORT=${GRADIO_PORT:-7860}
-      - API_BASE_URL=http://chatbot_app:${PORT:-8081}
-    depends_on:
-      chatbot_app:
-        condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${GRADIO_PORT:-7860}"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 120s
-    networks:
-      - chatbot-network
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-        reservations:
-          memory: 512M
+  # gradio_app:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #     args:
+  #       CONTAINER_USER: ${CONTAINER_USER:-appuser}
+  #       CONTAINER_UID: ${CONTAINER_UID:-1004}
+  #   image: chatbot:prod
+  #   container_name: gradio_app_prod
+  #   ports:
+  #     - "${GRADIO_PORT:-7860}:${GRADIO_PORT:-7860}"
+  #   command: ["python", "application_runner.py", "--mode", "both"]
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     # Gradio Configuration
+  #     - ENVIRONMENT=${ENVIRONMENT:-production}
+  #     - DEBUG=${DEBUG:-false}
+  #     - GRADIO_SHARE=${GRADIO_SHARE:-false}
+  #     - GRADIO_HOST=${GRADIO_HOST:-0.0.0.0}
+  #     - GRADIO_PORT=${GRADIO_PORT:-7860}
+  #     - API_BASE_URL=http://chatbot_app:${PORT:-8081}
+  #   depends_on:
+  #     chatbot_app:
+  #       condition: service_healthy
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:${GRADIO_PORT:-7860}"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 120s
+  #   networks:
+  #     - chatbot-network
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 1G
+  #       reservations:
+  #         memory: 512M
 
 # No volumes - application is fully self-contained
 # Data persistence should be handled by external managed databases in production
@@ -162,6 +170,6 @@ services:
 networks:
   chatbot-network:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16 
+    # ipam:
+    #   config:
+    #     - subnet: 172.20.0.0/16 

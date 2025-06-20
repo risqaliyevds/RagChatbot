@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     build-essential \
     git \
+    git-lfs \
     libreoffice \
     libreoffice-writer \
     libreoffice-calc \
@@ -37,6 +38,9 @@ RUN useradd -m -u ${CONTAINER_UID} ${CONTAINER_USER} \
 
 # Copy requirements first for better caching
 COPY --chown=${CONTAINER_USER}:${CONTAINER_USER} requirements.txt .
+
+# Copy .env file
+COPY --chown=${CONTAINER_USER}:${CONTAINER_USER} .env .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip \
@@ -54,9 +58,15 @@ COPY --chown=${CONTAINER_USER}:${CONTAINER_USER} database/ ./database/
 
 # Create documents directory placeholder (no longer copying files)
 RUN mkdir -p documents
+RUN mkdir -p /app/models
+RUN cd /app/models && git lfs install && git clone https://huggingface.co/intfloat/multilingual-e5-large-instruct && rm -rf multilingual-e5-large-instruct/.git
+
 
 # Switch to non-root user
 USER ${CONTAINER_USER}
+
+ENV TRANSFORMERS_OFFLINE=1
+ENV HF_DATASETS_OFFLINE=1
 
 # Expose ports
 EXPOSE 8081 7860

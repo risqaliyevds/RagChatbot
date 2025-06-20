@@ -1,0 +1,148 @@
+version: '3.8'
+
+# =============================================================================
+# Development Docker Compose Configuration
+# =============================================================================
+# This docker-compose file is optimized for development.
+# It provides separate services for FastAPI and Gradio for easier debugging.
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: chatbot_postgres_dev
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-chatbot_db}
+      POSTGRES_USER: ${POSTGRES_USER:-chatbot_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chatbot_password}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chatbot_user} -d ${POSTGRES_DB:-chatbot_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - chatbot-network
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Qdrant Vector Database
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant_dev
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+      - QDRANT__LOG_LEVEL=${QDRANT_LOG_LEVEL:-INFO}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/collections"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - chatbot-network
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+  # Main FastAPI Application
+  chatbot_app:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CONTAINER_USER: ${CONTAINER_USER:-appuser}
+        CONTAINER_UID: ${CONTAINER_UID:-1004}
+    container_name: chatbot_fastapi_dev
+    ports:
+      - "${PORT:-8081}:${PORT:-8081}"
+    command: ["python", "application_runner.py", "--mode", "api"]
+    env_file:
+      - .env
+    environment:
+      # Application Configuration
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - DEBUG=${DEBUG:-true}
+      - RELOAD=${RELOAD:-true}
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+      - HOST=${HOST:-0.0.0.0}
+      - PORT=${PORT:-8081}
+      # PostgreSQL Database Configuration
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      # Qdrant Configuration
+      - QDRANT_URL=http://qdrant:6333
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${PORT:-8081}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    networks:
+      - chatbot-network
+    volumes:
+      - ./documents:/app/documents
+      - ./app:/app/app
+      - ./database:/app/database
+
+  # Gradio Interface (Separate for Development)
+  gradio_app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CONTAINER_USER: ${CONTAINER_USER:-appuser}
+        CONTAINER_UID: ${CONTAINER_UID:-1004}
+    container_name: chatbot_gradio_dev
+    ports:
+      - "${GRADIO_PORT:-7860}:${GRADIO_PORT:-7860}"
+    command: ["python", "application_runner.py", "--mode", "gradio"]
+    env_file:
+      - .env
+    environment:
+      # Gradio Configuration
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - DEBUG=${DEBUG:-true}
+      - GRADIO_SHARE=${GRADIO_SHARE:-false}
+      - GRADIO_HOST=${GRADIO_HOST:-0.0.0.0}
+      - GRADIO_PORT=${GRADIO_PORT:-7860}
+      - API_BASE_URL=http://chatbot_app:${PORT:-8081}
+    depends_on:
+      chatbot_app:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${GRADIO_PORT:-7860}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - chatbot-network
+    volumes:
+      - ./app:/app/app
+
+# Development volumes for data persistence
+volumes:
+  postgres_data:
+  qdrant_storage:
+
+networks:
+  chatbot-network:
+    driver: bridge 

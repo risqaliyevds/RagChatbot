@@ -192,6 +192,26 @@ class SimpleQdrantVectorStore:
             logger.error(f"Failed to delete documents by source {source_identifier}: {e}")
             return 0
     
+    async def delete_points(self, point_ids: List[int]) -> int:
+        """Delete points by their IDs"""
+        try:
+            if not point_ids:
+                logger.warning("No point IDs provided for deletion")
+                return 0
+            
+            # Delete the points
+            self.client.delete(
+                collection_name=self.collection_name,
+                points_selector=point_ids
+            )
+            
+            logger.info(f"Deleted {len(point_ids)} points from collection: {self.collection_name}")
+            return len(point_ids)
+            
+        except Exception as e:
+            logger.error(f"Failed to delete points: {e}")
+            return 0
+    
     def get_collection_info(self) -> Dict[str, Any]:
         """Get information about the collection"""
         try:
