@@ -21,6 +21,10 @@ python-docx
 unstructured
 beautifulsoup4
 requests
+pandas
+openpyxl
+xlrd
+nltk
 
 # Transformers and ML dependencies for custom embeddings
 torch

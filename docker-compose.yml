@@ -43,9 +43,10 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:6333/collections"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - chatbot-network
     volumes:
@@ -53,16 +54,12 @@ services:
 
   # Main FastAPI Application
   chatbot_app:
-    build: 
-      context: .
-      dockerfile: Dockerfile
-      args:
-        CONTAINER_USER: ${CONTAINER_USER:-appuser}
-        CONTAINER_UID: ${CONTAINER_UID:-1004}
+    image: ragchatbot:1.0.4
     container_name: chatbot_fastapi_dev
     ports:
       - "${PORT:-8081}:${PORT:-8081}"
-    command: ["python", "application_runner.py", "--mode", "api"]
+      - "${GRADIO_PORT:-7860}:${GRADIO_PORT:-7860}"
+    command: ["python", "application_runner.py", "--mode", "both"]
     env_file:
       - .env
     environment:
@@ -73,6 +70,10 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - HOST=${HOST:-0.0.0.0}
       - PORT=${PORT:-8081}
+      - GRADIO_PORT=${GRADIO_PORT:-7860}
+      - GRADIO_HOST=${GRADIO_HOST:-0.0.0.0}
+      - GRADIO_SHARE=${GRADIO_SHARE:-false}
+      - API_BASE_URL=http://localhost:${PORT:-8081}
       # PostgreSQL Database Configuration
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -84,59 +85,25 @@ services:
       - QDRANT_URL=http://qdrant:6333
     depends_on:
       postgres:
-        condition: service_healthy
+        condition: service_started
       qdrant:
         condition: service_started
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${PORT:-8081}/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:7860"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 120s
+      retries: 5
+      start_period: 180s
     networks:
       - chatbot-network
     volumes:
       - ./documents:/app/documents
       - ./app:/app/app
       - ./database:/app/database
-
-  # Gradio Interface (Separate for Development)
-  gradio_app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        CONTAINER_USER: ${CONTAINER_USER:-appuser}
-        CONTAINER_UID: ${CONTAINER_UID:-1004}
-    container_name: chatbot_gradio_dev
-    ports:
-      - "${GRADIO_PORT:-7860}:${GRADIO_PORT:-7860}"
-    command: ["python", "application_runner.py", "--mode", "gradio"]
-    env_file:
-      - .env
-    environment:
-      # Gradio Configuration
-      - ENVIRONMENT=${ENVIRONMENT:-development}
-      - DEBUG=${DEBUG:-true}
-      - GRADIO_SHARE=${GRADIO_SHARE:-false}
-      - GRADIO_HOST=${GRADIO_HOST:-0.0.0.0}
-      - GRADIO_PORT=${GRADIO_PORT:-7860}
-      - API_BASE_URL=http://chatbot_app:${PORT:-8081}
-    depends_on:
-      chatbot_app:
-        condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${GRADIO_PORT:-7860}"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    networks:
-      - chatbot-network
-    volumes:
-      - ./app:/app/app
+      - ./fastapi_application.py:/app/fastapi_application.py
+      - ./application_runner.py:/app/application_runner.py
+      - ./.env:/app/.env
 
 # Development volumes for data persistence
 volumes:

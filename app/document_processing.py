@@ -127,7 +127,7 @@ def preprocess_documents(documents: List[Document]) -> List[Document]:
             content = " ".join(content.split())
             
             # Skip very short documents
-            if len(content) < 50:
+            if len(content) < config.get("min_document_length", 50):
                 logger.debug(f"Skipping short document {i}: {len(content)} characters")
                 continue
             
@@ -168,6 +168,8 @@ async def process_uploaded_document(file: UploadFile, config: Dict[str, Any]) ->
         documents = await process_pdf_with_progress(content, filename)
     elif file_extension in [".doc", ".docx"]:
         documents = await process_docx_with_progress(content, filename)
+    elif file_extension in [".xlsx", ".xls"]:
+        documents = await process_excel_with_progress(content, filename)
     elif file_extension == ".txt":
         documents = await process_text_with_progress(content, filename)
     else:
@@ -238,6 +240,8 @@ async def process_document_content_with_progress(content: bytes, filename: str, 
         documents = await process_pdf_with_progress(content, filename, progress_callback)
     elif file_extension in [".doc", ".docx"]:
         documents = await process_docx_with_progress(content, filename, progress_callback)
+    elif file_extension in [".xlsx", ".xls"]:
+        documents = await process_excel_with_progress(content, filename, progress_callback)
     elif file_extension == ".txt":
         documents = await process_text_with_progress(content, filename, progress_callback)
     else:
@@ -357,6 +361,73 @@ async def process_docx_with_progress(content: bytes, filename: str, progress_cal
         os.unlink(temp_path)
 
 
+async def process_excel_with_progress(content: bytes, filename: str, progress_callback=None) -> List[Document]:
+    """Process Excel content with progress reporting"""
+    import tempfile
+    import pandas as pd
+    
+    # Save content to temporary file
+    with tempfile.NamedTemporaryFile(suffix=Path(filename).suffix, delete=False) as temp_file:
+        temp_file.write(content)
+        temp_path = temp_file.name
+    
+    try:
+        if progress_callback:
+            await progress_callback("excel_processing", 40, "Reading Excel file...")
+        
+        # Read all sheets from Excel file
+        excel_file = pd.ExcelFile(temp_path)
+        documents = []
+        
+        for i, sheet_name in enumerate(excel_file.sheet_names):
+            if progress_callback:
+                progress = 40 + (i / len(excel_file.sheet_names)) * 20
+                await progress_callback("excel_processing", progress, f"Processing sheet: {sheet_name}")
+            
+            # Read the sheet
+            df = pd.read_excel(temp_path, sheet_name=sheet_name)
+            
+            # Convert to text - handle different approaches
+            if not df.empty:
+                # Method 1: Convert to structured text
+                text_content = f"Sheet: {sheet_name}\n\n"
+                
+                # Add column headers
+                text_content += "Columns: " + ", ".join(df.columns.astype(str)) + "\n\n"
+                
+                # Add rows as structured text
+                for index, row in df.iterrows():
+                    row_text = []
+                    for col in df.columns:
+                        if pd.notna(row[col]):
+                            row_text.append(f"{col}: {row[col]}")
+                    if row_text:
+                        text_content += " | ".join(row_text) + "\n"
+                
+                doc = Document(
+                    page_content=text_content,
+                    metadata={
+                        "source": filename,
+                        "file_type": "excel",
+                        "file_size": len(content),
+                        "sheet_name": sheet_name,
+                        "sheet_number": i + 1,
+                        "rows": len(df),
+                        "columns": len(df.columns)
+                    }
+                )
+                documents.append(doc)
+        
+        if progress_callback:
+            await progress_callback("excel_processing", 60, f"Processed {len(documents)} sheets")
+        
+        return documents
+        
+    finally:
+        # Clean up temporary file
+        os.unlink(temp_path)
+
+
 async def process_text_with_progress(content: bytes, filename: str, progress_callback=None) -> List[Document]:
     """Process text content with progress reporting"""
     
@@ -394,7 +465,7 @@ def check_available_models(endpoint: str, api_key: str = "EMPTY") -> List[str]:
     import httpx
     
     try:
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=config.get("http_client_timeout", 10.0)) as client:
             response = client.get(
                 f"{endpoint}/models",
                 headers={"Authorization": f"Bearer {api_key}"}

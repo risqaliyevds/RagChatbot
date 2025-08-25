@@ -19,18 +19,43 @@ class MultilingualE5Embeddings:
     """Custom embedding class for intfloat/multilingual-e5-large-instruct model"""
     
     def __init__(self, model_name: str = "intfloat/multilingual-e5-large-instruct", device: str = None):
+        # Handle None model_name by setting default
+        if model_name is None:
+            model_name = "/app/models/multilingual-e5-large-instruct"
+            logger.warning(f"model_name was None, using default: {model_name}")
+        
         self.model_name = model_name
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         
         logger.info(f"Loading multilingual E5 model: {model_name} on {self.device}")
         
-        # Load tokenizer and model
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name)
-        self.model.to(self.device)
-        self.model.eval()
+        # Check if model_name is a local path or HuggingFace model name
+        is_local_path = model_name.startswith('/') or model_name.startswith('./') or model_name.startswith('../')
         
-        logger.info(f"Successfully loaded {model_name}")
+        try:
+            # Load tokenizer and model
+            if is_local_path:
+                # Local path - use offline mode
+                self.tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
+                self.model = AutoModel.from_pretrained(model_name, local_files_only=True)
+            else:
+                # HuggingFace model - try offline first, then online
+                try:
+                    self.tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
+                    self.model = AutoModel.from_pretrained(model_name, local_files_only=True)
+                except Exception as e:
+                    logger.warning(f"Failed to load model offline: {e}")
+                    logger.info("Trying to load model online...")
+                    self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+                    self.model = AutoModel.from_pretrained(model_name)
+            
+            self.model.to(self.device)
+            self.model.eval()
+            
+            logger.info(f"Successfully loaded {model_name}")
+        except Exception as e:
+            logger.error(f"Failed to load model {model_name}: {e}")
+            raise
     
     def _get_detailed_instruct(self, task_description: str, query: str) -> str:
         """Format query with task description for E5 instruct model"""

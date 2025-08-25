@@ -39,24 +39,60 @@ class SimpleQdrantVectorStore:
         
         logger.info(f"Adding {len(documents)} documents to collection '{self.collection_name}'")
         
-        # Generate embeddings with progress tracking
-        if progress_callback:
-            await progress_callback("embedding", 10, "Generating embeddings...")
+        # Initial progress for embedding generation
+        embedding_start = self.config.get("embedding_progress_start", 10)
+        embedding_mid = self.config.get("embedding_progress_mid", 50)
         
+        if progress_callback:
+            await progress_callback("embedding", embedding_start, "Generating embeddings...")
+        
+        # Generate embeddings for all documents
         texts = [doc.page_content for doc in documents]
         embeddings = self.embeddings.embed_documents(texts)
+        logger.info(f"Generated {len(embeddings)} embeddings")
         
         if progress_callback:
-            await progress_callback("embedding", 50, f"Generated {len(embeddings)} embeddings")
+            await progress_callback("embedding", embedding_mid, f"Generated {len(embeddings)} embeddings")
         
         # Prepare points for insertion
         points = []
+        
+        # Progress tracking for indexing
+        indexing_start = self.config.get("indexing_progress_start", 50)
+        indexing_end = self.config.get("indexing_progress_end", 90)
+        progress_interval = self.config.get("progress_update_interval", 10)
+        
         for i, (doc, embedding) in enumerate(zip(documents, embeddings)):
+            # Update progress periodically
+            if progress_callback and i % progress_interval == 0:
+                progress = indexing_start + (i / len(documents)) * (indexing_end - indexing_start)
+                await progress_callback("indexing", progress, f"Indexing document {i+1}/{len(documents)}")
+            
+            # Create point with unique ID
             point_id = int(str(uuid.uuid4().int)[:18])  # Convert to int for Qdrant
+            
+            # Insert in batches for better performance
+            batch_size = self.config.get("vector_batch_size", 100)
+            if len(points) >= batch_size:
+                try:
+                    self.client.upsert(
+                        collection_name=self.collection_name,
+                        points=points
+                    )
+                    points = []
+                    logger.debug(f"Inserted batch of {len(points)} points")
+                    
+                    if progress_callback:
+                        progress = indexing_start + (i / len(documents)) * (indexing_end - indexing_start)
+                        await progress_callback("indexing", progress, f"Inserted {i+1}/{len(documents)} points")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to insert batch: {e}")
+                    raise
             
             # Prepare metadata, ensuring all values are JSON serializable
             metadata = {
-                "content": doc.page_content[:500],  # Truncate for metadata
+                "content": doc.page_content,  # Store full content
                 "source": str(doc.metadata.get("source", "unknown")),
                 "page": doc.metadata.get("page", 0),
                 "chunk_index": i
@@ -75,40 +111,27 @@ class SimpleQdrantVectorStore:
                 payload=metadata
             )
             points.append(point)
-            
-            if progress_callback and i % 10 == 0:
-                progress = 50 + (i / len(documents)) * 40
-                await progress_callback("indexing", progress, f"Prepared {i+1}/{len(documents)} points")
         
-        if progress_callback:
-            await progress_callback("indexing", 90, "Uploading to Qdrant...")
-        
-        # Insert points in batches
-        batch_size = 100
-        total_inserted = 0
-        
-        for i in range(0, len(points), batch_size):
-            batch = points[i:i + batch_size]
+        if points:
             try:
                 self.client.upsert(
                     collection_name=self.collection_name,
-                    points=batch
+                    points=points
                 )
-                total_inserted += len(batch)
-                logger.debug(f"Inserted batch of {len(batch)} points")
+                logger.debug(f"Inserted batch of {len(points)} points")
                 
                 if progress_callback:
-                    progress = 90 + (total_inserted / len(points)) * 10
-                    await progress_callback("indexing", progress, f"Inserted {total_inserted}/{len(points)} points")
+                    progress = indexing_start + (len(documents) / len(documents)) * (indexing_end - indexing_start)
+                    await progress_callback("indexing", progress, f"Inserted {len(documents)}/{len(documents)} points")
                     
             except Exception as e:
                 logger.error(f"Failed to insert batch: {e}")
                 raise
         
         if progress_callback:
-            await progress_callback("complete", 100, f"Successfully added {total_inserted} documents")
+            await progress_callback("complete", 100, f"Successfully added {len(documents)} documents")
         
-        logger.info(f"Successfully added {total_inserted} documents to collection '{self.collection_name}'")
+        logger.info(f"Successfully added {len(documents)} documents to collection '{self.collection_name}'")
         return [point.id for point in points]
     
     def search(self, query: str, k: int = 3, score_threshold: float = 0.4) -> List[Document]:
@@ -235,7 +258,7 @@ class SimpleQdrantVectorStore:
 def init_qdrant_client(config) -> QdrantClient:
     """Initialize Qdrant client"""
     try:
-        qdrant_url = config.get("qdrant_url", "http://localhost:6333")
+        qdrant_url = config.get("qdrant_url", "http://qdrant:6333")
         client = QdrantClient(
             url=qdrant_url,
             api_key=config.get("qdrant_api_key")
@@ -264,10 +287,9 @@ async def init_vectorstore(config, documents: List[Document], client: QdrantClie
             logger.info(f"Using vLLM embeddings: {config.get('embedding_model')}")
         else:
             # Use local multilingual E5 model
-            embeddings_model = MultilingualE5Embeddings(
-                model_name=config.get("embedding_model")
-            )
-            logger.info(f"Using local embeddings: {config.get('embedding_model')}")
+            model_name = config.get("embedding_model") or "/app/models/multilingual-e5-large-instruct"
+            embeddings_model = MultilingualE5Embeddings(model_name=model_name)
+            logger.info(f"Using local embeddings: {model_name}")
         
         # Test embeddings
         test_embedding = embeddings_model.embed_query("test")
@@ -278,51 +300,76 @@ async def init_vectorstore(config, documents: List[Document], client: QdrantClie
         logger.error(f"Failed to initialize embeddings: {e}")
         raise
     
-    # Initialize collection
+    # Initialize collection with retry logic
     collection_name = config.get("qdrant_collection_name")
     
-    try:
-        # Check if collection exists
-        collections = client.get_collections().collections
-        collection_exists = any(col.name == collection_name for col in collections)
-        
-        if collection_exists:
-            collection_info = client.get_collection(collection_name)
-            existing_dim = collection_info.config.params.vectors.size
+    # CRITICAL FIX: Ensure collection_name is never None
+    if not collection_name or collection_name == "None":
+        collection_name = "chatbot_collection"
+        logger.warning(f"⚠️ Collection name was invalid ({config.get('qdrant_collection_name')}), using default: {collection_name}")
+    
+    logger.info(f"🔧 Using Qdrant collection: {collection_name}")
+    
+    max_retries = 3
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"🔄 Qdrant collection initialization attempt {attempt + 1}/{max_retries}")
             
-            if existing_dim != embedding_dim:
-                if config.get("qdrant_force_recreate", False):
-                    logger.warning(f"Dimension mismatch. Recreating collection {collection_name}")
-                    client.delete_collection(collection_name)
-                    collection_exists = False
-                else:
-                    raise ValueError(
-                        f"Collection {collection_name} exists with dimension {existing_dim}, "
-                        f"but embedding model produces {embedding_dim} dimensions. "
-                        f"Set QDRANT_FORCE_RECREATE=true to recreate the collection."
+            # Check if collection exists
+            collections = client.get_collections().collections
+            collection_exists = any(col.name == collection_name for col in collections)
+            
+            if collection_exists:
+                collection_info = client.get_collection(collection_name)
+                existing_dim = collection_info.config.params.vectors.size
+                
+                if existing_dim != embedding_dim:
+                    if config.get("qdrant_force_recreate", False):
+                        logger.warning(f"Dimension mismatch. Recreating collection {collection_name}")
+                        client.delete_collection(collection_name)
+                        collection_exists = False
+                    else:
+                        raise ValueError(
+                            f"Collection {collection_name} exists with dimension {existing_dim}, "
+                            f"but embedding model produces {embedding_dim} dimensions. "
+                            f"Set QDRANT_FORCE_RECREATE=true to recreate the collection."
+                        )
+            
+            if not collection_exists:
+                # Create collection
+                distance = Distance.COSINE
+                if config.get("qdrant_distance", "").upper() == "EUCLID":
+                    distance = Distance.EUCLID
+                elif config.get("qdrant_distance", "").upper() == "DOT":
+                    distance = Distance.DOT
+                
+                client.create_collection(
+                    collection_name=collection_name,
+                    vectors_config=VectorParams(
+                        size=embedding_dim,
+                        distance=distance,
+                        on_disk=config.get("qdrant_on_disk", True)
                     )
-        
-        if not collection_exists:
-            # Create collection
-            distance = Distance.COSINE
-            if config.get("qdrant_distance", "").upper() == "EUCLID":
-                distance = Distance.EUCLID
-            elif config.get("qdrant_distance", "").upper() == "DOT":
-                distance = Distance.DOT
-            
-            client.create_collection(
-                collection_name=collection_name,
-                vectors_config=VectorParams(
-                    size=embedding_dim,
-                    distance=distance,
-                    on_disk=config.get("qdrant_on_disk", True)
                 )
-            )
-            logger.info(f"Created Qdrant collection: {collection_name}")
-        
-    except Exception as e:
-        logger.error(f"Failed to initialize Qdrant collection: {e}")
-        raise
+                logger.info(f"✅ Created Qdrant collection: {collection_name}")
+            else:
+                logger.info(f"✅ Using existing Qdrant collection: {collection_name}")
+            
+            # Test collection access
+            test_collections = client.get_collections().collections
+            logger.info(f"✅ Collection access test successful, found {len(test_collections)} collections")
+            break
+            
+        except Exception as e:
+            logger.error(f"❌ Qdrant collection initialization attempt {attempt + 1} failed: {e}")
+            if attempt == max_retries - 1:
+                logger.error(f"Failed to initialize Qdrant collection after {max_retries} attempts")
+                raise
+            logger.info(f"⏳ Retrying in {retry_delay} seconds...")
+            time.sleep(retry_delay)
+            retry_delay += 1
     
     # Initialize vector store
     vectorstore = SimpleQdrantVectorStore(

@@ -101,6 +101,10 @@ def main():
     
     args = parser.parse_args()
     
+    # Load configuration first
+    from app.config import load_config
+    config = load_config()
+    
     # Check prerequisites
     check_prerequisites()
     
@@ -108,7 +112,7 @@ def main():
     if args.check_db:
         logger.info("Checking database connection and running initialization...")
         try:
-            from database import init_database
+            from app.database.postgresql_manager import init_database
             from app.database_initializer import initialize_system, check_connections
             
             # First check connections
@@ -153,10 +157,29 @@ def main():
         
         def signal_handler(sig, frame):
             logger.info("\nShutting down services...")
-            api_process.terminate()
-            gradio_process.terminate()
-            api_process.join(timeout=5)
-            gradio_process.join(timeout=5)
+            try:
+                if api_process and api_process.is_alive():
+                    api_process.terminate()
+            except (AttributeError, ProcessLookupError):
+                pass
+            try:
+                if gradio_process and gradio_process.is_alive():
+                    gradio_process.terminate()
+            except (AttributeError, ProcessLookupError):
+                pass
+            
+            # Wait for processes to finish
+            try:
+                if api_process:
+                    api_process.join(timeout=5)
+            except (AttributeError, ProcessLookupError):
+                pass
+            try:
+                if gradio_process:
+                    gradio_process.join(timeout=5)
+            except (AttributeError, ProcessLookupError):
+                pass
+            
             logger.info("Services stopped.")
             sys.exit(0)
         
@@ -169,8 +192,24 @@ def main():
             api_process.start()
             logger.info("FastAPI process started")
             
-            # Give API time to start before Gradio
-            time.sleep(3)
+            # Give API time to start and wait for it to be ready
+            startup_delay = config.get("startup_delay", 10)  # Increased from 3 to 10 seconds
+            logger.info(f"Waiting {startup_delay} seconds for FastAPI to initialize...")
+            time.sleep(startup_delay)
+            
+            # Check if FastAPI is responding before starting Gradio
+            import requests
+            for attempt in range(5):
+                try:
+                    response = requests.get("http://localhost:8081/health", timeout=5)
+                    if response.status_code == 200:
+                        logger.info("✅ FastAPI is ready, starting Gradio...")
+                        break
+                except:
+                    logger.info(f"FastAPI not ready yet, attempt {attempt + 1}/5...")
+                    time.sleep(3)
+            else:
+                logger.warning("⚠️ FastAPI may not be fully ready, but starting Gradio anyway...")
             
             gradio_process.start()
             logger.info("Gradio process started")
@@ -189,18 +228,49 @@ def main():
             # If one process dies, kill the other
             if not api_process.is_alive():
                 logger.error("FastAPI process died unexpectedly")
-                gradio_process.terminate()
+                if gradio_process.is_alive():
+                    gradio_process.terminate()
             elif not gradio_process.is_alive():
                 logger.error("Gradio process died unexpectedly")
-                api_process.terminate()
+                if api_process.is_alive():
+                    api_process.terminate()
                 
         except Exception as e:
             logger.error(f"Error running both services: {e}")
-            if api_process.is_alive():
+            if api_process and api_process.is_alive():
                 api_process.terminate()
-            if gradio_process.is_alive():
+            if gradio_process and gradio_process.is_alive():
                 gradio_process.terminate()
             sys.exit(1)
+        
+        except KeyboardInterrupt:
+            logger.info("Received interrupt signal, shutting down...")
+        
+        finally:
+            # Clean shutdown
+            logger.info("Shutting down processes...")
+            try:
+                if api_process and api_process.is_alive():
+                    api_process.terminate()
+            except (AttributeError, ProcessLookupError):
+                pass
+            try:
+                if gradio_process and gradio_process.is_alive():
+                    gradio_process.terminate()
+            except (AttributeError, ProcessLookupError):
+                pass
+            
+            # Wait for processes to gracefully exit
+            try:
+                if api_process:
+                    api_process.join(timeout=config.get("process_join_timeout", 5))
+            except (AttributeError, ProcessLookupError):
+                pass
+            try:
+                if gradio_process:
+                    gradio_process.join(timeout=config.get("process_join_timeout", 5))
+            except (AttributeError, ProcessLookupError):
+                pass
 
 
 if __name__ == "__main__":

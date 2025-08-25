@@ -16,8 +16,13 @@ import requests
 import json
 import uuid
 import os
+import logging
 from datetime import datetime
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
+from app.config import get_config
+
+# Initialize logger
+logger = logging.getLogger(__name__)
 
 # Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8081")
@@ -30,15 +35,22 @@ print(f"🔧 DEBUG: Environment API_BASE_URL = {os.getenv('API_BASE_URL', 'NOT S
 class GradioRAGClient:
     """Gradio RAG клиенти"""
     
-    def __init__(self, base_url: str = API_BASE_URL):
+    def __init__(self, base_url: str = API_BASE_URL, config: Dict[str, Any] = None):
         self.base_url = base_url
         self.current_user_id = DEFAULT_USER_ID
         self.current_chat_id = None
+        self.config = config or {}
+        
+        # Configuration for timeouts and limits
+        self.client_timeout = self.config.get("gradio_client_timeout", 60)
+        self.fresh_init_timeout = self.config.get("fresh_init_timeout", 60) 
+        self.http_timeout = self.config.get("http_client_timeout", 10)
+        self.error_text_limit = self.config.get("error_text_limit", 500)
         
     def check_health(self) -> dict:
         """Тизим соғлиғини текшириш"""
         try:
-            response = requests.get(f"{self.base_url}/health", timeout=10)
+            response = requests.get(f"{self.base_url}/health", timeout=self.http_timeout)
             if response.status_code == 200:
                 return {"status": "✅ Соғлом", "data": response.json()}
             else:
@@ -64,7 +76,7 @@ class GradioRAGClient:
                 f"{self.base_url}/v1/chat",
                 json=payload,
                 headers={"Content-Type": "application/json"},
-                timeout=60  # Increased timeout
+                timeout=self.client_timeout
             )
             
             print(f"🔧 DEBUG: Response status: {response.status_code}")
@@ -80,7 +92,7 @@ class GradioRAGClient:
                     "timestamp": data.get("timestamp", "")
                 }
             else:
-                error_text = response.text[:500]  # Limit error text
+                error_text = response.text[:self.error_text_limit]  # Use configurable limit
                 print(f"🔧 DEBUG: Error response: {error_text}")
                 return {
                     "success": False,
@@ -121,7 +133,7 @@ class GradioRAGClient:
                 f"{self.base_url}/v1/chat/history",
                 json=payload,
                 headers={"Content-Type": "application/json"},
-                timeout=10
+                timeout=self.http_timeout
             )
             
             if response.status_code == 200:
@@ -143,7 +155,7 @@ class GradioRAGClient:
                 f"{self.base_url}/v1/chat/new",
                 json=payload,
                 headers={"Content-Type": "application/json"},
-                timeout=10
+                timeout=self.http_timeout
             )
             
             if response.status_code == 200:
@@ -179,7 +191,7 @@ class GradioRAGClient:
                 f"{self.base_url}/v1/user/session-status",
                 json=payload,
                 headers={"Content-Type": "application/json"},
-                timeout=10
+                timeout=self.http_timeout
             )
             
             if response.status_code == 200:
@@ -196,7 +208,7 @@ class GradioRAGClient:
             uid = user_id or self.current_user_id
             response = requests.get(
                 f"{self.base_url}/v1/user/{uid}/chats",
-                timeout=10
+                timeout=self.http_timeout
             )
             
             if response.status_code == 200:
@@ -222,11 +234,62 @@ class GradioRAGClient:
             response = requests.post(
                 f"{self.base_url}/v1/documents/upload-with-progress",
                 files=files,
-                timeout=60  # Longer timeout for file upload
+                timeout=self.client_timeout  # Use longer timeout for file upload
             )
             
             if response.status_code == 200:
-                return {"success": True, "data": response.json()}
+                initial_data = response.json()
+                upload_id = initial_data.get("upload_id")
+                
+                if not upload_id:
+                    return {"success": False, "error": "No upload ID received"}
+                
+                # Poll the progress endpoint until completion
+                import time
+                max_wait_time = 300  # 5 minutes maximum
+                poll_interval = 1  # Check every second
+                elapsed_time = 0
+                
+                while elapsed_time < max_wait_time:
+                    try:
+                        progress_response = requests.get(
+                            f"{self.base_url}/v1/documents/upload-progress/{upload_id}",
+                            timeout=self.http_timeout
+                        )
+                        
+                        if progress_response.status_code == 200:
+                            progress_data = progress_response.json()
+                            stage = progress_data.get("stage", "")
+                            
+                            if stage == "completed":
+                                # Extract completion data from details
+                                details = progress_data.get("details", {})
+                                return {
+                                    "success": True,
+                                    "data": {
+                                        "upload_id": upload_id,
+                                        "filename": details.get("original_filename", ""),
+                                        "file_size": len(file_content),  # Use actual file size
+                                        "chunks_added": details.get("chunks_added", 0),
+                                        "processing_time": details.get("processing_time", 0),
+                                        "message": progress_data.get("message", "Successfully uploaded")
+                                    }
+                                }
+                            elif stage == "error":
+                                error_msg = progress_data.get("message", "Upload failed")
+                                return {"success": False, "error": error_msg}
+                            
+                            # Still processing, wait and try again
+                            time.sleep(poll_interval)
+                            elapsed_time += poll_interval
+                        else:
+                            return {"success": False, "error": f"Progress check failed: HTTP {progress_response.status_code}"}
+                    
+                    except Exception as e:
+                        return {"success": False, "error": f"Progress check error: {str(e)}"}
+                
+                return {"success": False, "error": "Upload timed out"}
+                
             else:
                 return {"success": False, "error": f"HTTP {response.status_code}: {response.text}"}
                 
@@ -238,7 +301,7 @@ class GradioRAGClient:
         try:
             response = requests.get(
                 f"{self.base_url}/v1/documents/list",
-                timeout=10
+                timeout=self.http_timeout
             )
             
             if response.status_code == 200:
@@ -257,8 +320,39 @@ class GradioRAGClient:
             response = requests.delete(
                 f"{self.base_url}/v1/documents/delete",
                 json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=10
+                timeout=self.http_timeout
+            )
+            
+            if response.status_code == 200:
+                return {"success": True, "data": response.json()}
+            else:
+                return {"success": False, "error": f"HTTP {response.status_code}: {response.text}"}
+                
+        except Exception as e:
+            return {"success": False, "error": f"Хато: {str(e)}"}
+
+    def get_document_stats(self) -> dict:
+        """Ҳужжат статистикасини олиш"""
+        try:
+            response = requests.get(
+                f"{self.base_url}/v1/documents/stats",
+                timeout=self.http_timeout
+            )
+            
+            if response.status_code == 200:
+                return {"success": True, "data": response.json()}
+            else:
+                return {"success": False, "error": f"HTTP {response.status_code}: {response.text}"}
+                
+        except Exception as e:
+            return {"success": False, "error": f"Хато: {str(e)}"}
+
+    def fresh_initialize_system(self) -> dict:
+        """Тизимни янги ҳолатга келтириш (барча маълумотлар ўчириш)"""
+        try:
+            response = requests.post(
+                f"{self.base_url}/v1/system/fresh-init",
+                timeout=self.fresh_init_timeout  # Use longer timeout for initialization
             )
             
             if response.status_code == 200:
@@ -271,8 +365,9 @@ class GradioRAGClient:
 
 
 
-# Global client instance
-client = GradioRAGClient()
+# Initialize client globally for reuse
+config = get_config()
+client = GradioRAGClient(config=config.__dict__ if hasattr(config, '__dict__') else config)
 
 # Test connection on startup
 def test_connection():
@@ -566,6 +661,9 @@ def upload_document_handler(file, progress=gr.Progress()) -> str:
             processing_time = data.get("processing_time", 0)
             message = data.get("message", "")
             
+            # Debug logging
+            logger.info(f"Upload completion data: filename={filename}, size={file_size}, chunks={chunks_added}")
+            
             # Convert file size to readable format
             if file_size < 1024:
                 size_str = f"{file_size} байт"
@@ -634,6 +732,9 @@ def list_documents_handler() -> str:
                 created_at = file_info.get("created_at", "")
                 modified_at = file_info.get("modified_at", "")
                 file_extension = file_info.get("file_extension", "")
+                
+                # Debug logging for individual files
+                logger.info(f"Processing file info for display: {filename}, size={file_size}")
                 
                 # Convert file size to readable format
                 if file_size < 1024:
@@ -716,6 +817,114 @@ def delete_document_handler(filename: str) -> str:
         else:
             error_msg = result.get("error", "Номаълум хато")
             return f"❌ Ҳужжатни ўчиришда хато: {error_msg}"
+            
+    except Exception as e:
+        return f"❌ Хато: {str(e)}"
+
+
+def get_document_stats_handler() -> str:
+    """Ҳужжат статистикасини кўрсатиш ишловчиси"""
+    try:
+        result = client.get_document_stats()
+        
+        if result.get("success"):
+            data = result.get("data", {})
+            doc_stats = data.get("document_stats", {})
+            vector_stats = data.get("vector_stats", {})
+            
+            total_docs = doc_stats.get("total_documents", 0)
+            active_docs = doc_stats.get("active_documents", 0)
+            inactive_docs = doc_stats.get("inactive_documents", 0)
+            total_size = doc_stats.get("total_size", 0)
+            total_chunks = doc_stats.get("total_chunks", 0)
+            
+            total_points = vector_stats.get("total_points", 0)
+            total_files = vector_stats.get("total_files", 0)
+            
+            # Convert total size to readable format
+            if total_size < 1024:
+                size_str = f"{total_size} байт"
+            elif total_size < 1024 * 1024:
+                size_str = f"{total_size / 1024:.1f} КБ"
+            else:
+                size_str = f"{total_size / (1024 * 1024):.1f} МБ"
+            
+            return f"""
+## 📊 Ҳужжат статистикаси
+
+### 📄 Ҳужжатлар
+- **Жами ҳужжатлар:** {total_docs}
+- **Фаол ҳужжатлар:** {active_docs}
+- **Ўчирилган ҳужжатлар:** {inactive_docs}
+- **Жами ҳажм:** {size_str}
+- **Жами чанклар:** {total_chunks}
+
+### 🔗 Векторлар
+- **Жами векторлар:** {total_points}
+- **Файллар билан алоқа:** {total_files}
+
+### 📈 Ўртача кўрсаткичлар
+- **Файл бошига чанклар:** {total_chunks / active_docs if active_docs > 0 else 0:.1f}
+- **Файл бошига векторлар:** {total_points / total_files if total_files > 0 else 0:.1f}
+
+---
+
+*Эътибор: Агар чанклар ёки векторлар 0 га тенг бўлса, бу ҳужжатлар тўлиқ ишлаб бўлинмаганини кўрсатиши мумкин.*
+"""
+        else:
+            error_msg = result.get("error", "Номаълум хато")
+            return f"❌ Статистикани олишда хато: {error_msg}"
+            
+    except Exception as e:
+        return f"❌ Хато: {str(e)}"
+
+
+def fresh_initialize_handler() -> str:
+    """Тизимни янги ҳолатга келтириш ишловчиси"""
+    try:
+        result = client.fresh_initialize_system()
+        
+        if result.get("success"):
+            data = result.get("data", {})
+            details = data.get("details", {})
+            warning = data.get("warning", "")
+            
+            postgresql_cleanup = details.get("postgresql_cleanup", False)
+            qdrant_cleanup = details.get("qdrant_cleanup", False)
+            database_migration = details.get("database_migration", False)
+            qdrant_collection = details.get("qdrant_collection", False)
+            
+            cleanup_status = "✅" if postgresql_cleanup else "❌"
+            qdrant_status = "✅" if qdrant_cleanup else "❌"
+            migration_status = "✅" if database_migration else "❌"
+            collection_status = "✅" if qdrant_collection else "❌"
+            
+            return f"""
+## 🧨 Тизим янги ҳолатга келтирилди!
+
+### ⚠️ Муҳим огоҳлантириш:
+{warning}
+
+### 🔄 Бажарилган амаллар:
+- **PostgreSQL маълумотлари тозаланди:** {cleanup_status}
+- **Qdrant коллекцияси тозаланди:** {qdrant_status} 
+- **Маълумотлар базаси яратилди:** {migration_status}
+- **Векторлар коллекцияси яратилди:** {collection_status}
+
+### ✅ Натижа:
+Тизим тўлиқ тозаланди ва янги ҳолатга келтирилди. Энди янги ҳужжатлар юклашингиз мумкин.
+
+### 📝 Кейинги қадамлар:
+1. Керакли ҳужжатларни қайта юкланг
+2. Чат ва фойдаланувчилар маълумотлари ҳам тозаланди
+3. Статистикани текшириб кўринг
+
+---
+
+*Эътибор: Барча олдинги маълумотлар ҳамишагалик ўчирилди!*
+"""
+        else:
+            return f"❌ Янги ҳолатга келтиришда хато: {result.get('error', 'Номаълум хато')}"
             
     except Exception as e:
         return f"❌ Хато: {str(e)}"
@@ -872,6 +1081,32 @@ with gr.Blocks(title="Platform Assistant RAG Chatbot", theme=gr.themes.Soft()) a
             
             delete_output = gr.Markdown(label="Ўчириш натижаси")
         
+        with gr.Tab("📊 Статистика"):
+            gr.Markdown("""
+            ### 📊 Ҳужжат ва векторлар статистикаси
+            
+            Бу ерда тизимдаги барча ҳужжатлар ва уларнинг ишлов бериш ҳолати ҳақида батафсил маълумот олишингиз мумкин.
+            """)
+            
+            with gr.Row():
+                stats_btn = gr.Button("🔄 Статистикани янгилаш", variant="primary")
+                
+            stats_output = gr.Markdown(label="Тизим статистикаси")
+            
+            gr.Markdown("---")
+            
+            gr.Markdown("""
+            ### 🧨 Хавфли ҳудуд: Тизимни янги ҳолатга келтириш
+            
+            **⚠️ ОГОҲЛАНТИРИШ:** Бу амал БАРЧА маълумотларни ҳамишагалик ўчиради!
+            
+            Бу дагча барча ҳужжатлар, чатлар, фойдаланувчилар маълумотлари ва векторларни тизимдан тўлиқ ўчиради ва тизимни янги ҳолатга келтиради.
+            """)
+            
+            with gr.Row():
+                fresh_init_btn = gr.Button("🧨 ТИЗИМНИ ЯНГИ ҲОЛАТГА КЕЛТИРИШ", variant="stop", size="lg")
+                
+            fresh_init_output = gr.Markdown(label="Янги ҳолатга келтириш натижаси")
 
     
     # Event handlers
@@ -937,6 +1172,16 @@ with gr.Blocks(title="Platform Assistant RAG Chatbot", theme=gr.themes.Soft()) a
         outputs=delete_output
     )
     
+    stats_btn.click(
+        get_document_stats_handler,
+        outputs=stats_output
+    )
+    
+    fresh_init_btn.click(
+        fresh_initialize_handler,
+        outputs=fresh_init_output
+    )
+    
 
 
 if __name__ == "__main__":
@@ -947,7 +1192,7 @@ if __name__ == "__main__":
     demo.launch(
         server_name="0.0.0.0",
         server_port=7860,
-        share=False,
+        share=True,
         show_error=True,
         debug=False
     ) 
